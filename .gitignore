@@ -1,0 +1,22 @@
+# Environment
+.env
+.env.local
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Data / uploads
+backend/data/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Built frontend served by backend
+backend/static/
+
+# Misc
+.DS_Store
+*.log
