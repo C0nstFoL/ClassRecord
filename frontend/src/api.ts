@@ -5,6 +5,7 @@ export type RecordingStatus =
   | 'summarizing'
   | 'completed'
   | 'failed'
+  | 'recording'
 
 export interface CurrentUser {
   id: number
@@ -19,6 +20,7 @@ export interface Recording {
   transcript_text: string | null
   summary_text: string | null
   error_message: string | null
+  is_live: boolean
   created_at: string
   updated_at: string
 }
@@ -27,6 +29,13 @@ export interface QaRecord {
   id: number
   question: string
   answer: string
+  created_at: string
+}
+
+export interface SegmentSummary {
+  id: number
+  seq: number
+  text: string
   created_at: string
 }
 
@@ -72,5 +81,15 @@ export const api = {
     form.append('file', file, filename)
     form.append('title', title)
     return request<Recording>('/api/recordings', { method: 'POST', body: form })
+  },
+  listSegments: (id: number) => request<SegmentSummary[]>(`/api/recordings/${id}/segments`),
+  createLiveRecording: (title: string) => {
+    const form = new FormData()
+    form.append('title', title)
+    return request<Recording>('/api/recordings/live', { method: 'POST', body: form })
+  },
+  liveStreamUrl: (id: number) => {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    return `${protocol}://${window.location.host}/api/recordings/ws/${id}/stream`
   },
 }

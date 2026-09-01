@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     // 开发模式下将 /api 与 /auth 转发给本地后端，避免跨域 cookie 问题
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': { target: 'http://localhost:8000', ws: true },
       '/auth': 'http://localhost:8000',
     },
   },

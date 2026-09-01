@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api, type QaRecord, type Recording } from '../api'
+import { api, type QaRecord, type Recording, type SegmentSummary } from '../api'
 
 interface Props {
   recording: Recording | null
   onRetried?: () => void
 }
 
-type Tab = 'summary' | 'transcript' | 'ask'
+type Tab = 'summary' | 'transcript' | 'segments' | 'ask'
 
 export default function RecordingDetail({ recording, onRetried }: Props) {
   const [tab, setTab] = useState<Tab>('summary')
@@ -18,16 +18,20 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
   const [askError, setAskError] = useState<string | null>(null)
   const [qaHistory, setQaHistory] = useState<QaRecord[]>([])
   const [qaLoading, setQaLoading] = useState(false)
+  const [segments, setSegments] = useState<SegmentSummary[]>([])
 
   useEffect(() => {
     if (recording?.summary_text) {
       setTab('summary')
+    } else if (recording?.is_live) {
+      setTab('segments')
     } else if (recording?.transcript_text) {
       setTab('transcript')
     }
     setQuestion('')
     setAskError(null)
     setQaHistory([])
+    setSegments([])
   }, [recording?.id])
 
   useEffect(() => {
@@ -42,12 +46,35 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
       .finally(() => setQaLoading(false))
   }, [recording?.id])
 
+  useEffect(() => {
+    if (!recording || !recording.is_live) return
+    let cancelled = false
+    const load = () => {
+      api
+        .listSegments(recording.id)
+        .then((items) => {
+          if (!cancelled) setSegments(items)
+        })
+        .catch(() => {
+          /* 忽略加载分段小结失败 */
+        })
+    }
+    load()
+    const timer =
+      recording.status === 'recording' ? window.setInterval(load, 5000) : undefined
+    return () => {
+      cancelled = true
+      if (timer) window.clearInterval(timer)
+    }
+  }, [recording?.id, recording?.status])
+
   if (!recording) {
     return <div className="card">选择左侧的一条课堂记录查看详情</div>
   }
 
   const hasSummary = Boolean(recording.summary_text)
   const hasTranscript = Boolean(recording.transcript_text)
+  const hasSegments = segments.length > 0
 
   const handleRetry = async () => {
     setRetrying(true)
@@ -91,12 +118,22 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
           )}
         </div>
       )}
+      {recording.status === 'recording' && (
+        <div className="recording-status">
+          <span className="recording-dot" />
+          <span className="hint">
+            {window.sessionStorage.getItem(`live-recording-${recording.id}`)
+              ? '正在实时录制与转写...'
+              : '连接已断开，正在自动收尾生成总结...'}
+          </span>
+        </div>
+      )}
       {(recording.status === 'uploaded' || recording.status === 'transcribing') && (
         <p className="hint">正在转写语音，请稍候...</p>
       )}
       {recording.status === 'summarizing' && <p className="hint">转写完成，正在生成总结...</p>}
 
-      {(hasSummary || hasTranscript) && (
+      {(hasSummary || hasTranscript || hasSegments) && (
         <div className="detail-tabs">
           {hasSummary && (
             <button
@@ -104,6 +141,14 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
               onClick={() => setTab('summary')}
             >
               ✨ 课堂总结
+            </button>
+          )}
+          {hasSegments && (
+            <button
+              className={`detail-tab ${tab === 'segments' ? 'active' : ''}`}
+              onClick={() => setTab('segments')}
+            >
+              🧩 分段小结
             </button>
           )}
           {hasTranscript && (
@@ -128,6 +173,18 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
       {tab === 'summary' && hasSummary && (
         <div className="markdown-body summary-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
+        </div>
+      )}
+
+      {tab === 'segments' && hasSegments && (
+        <div className="live-segments">
+          {segments.map((seg) => (
+            <div key={seg.id} className="live-segment-item">
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.text}</ReactMarkdown>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

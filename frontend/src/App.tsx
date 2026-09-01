@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import { api, type Recording } from './api'
+import LiveRecorder from './pages/LiveRecorder'
 import LoginGate from './pages/LoginGate'
 import Recorder from './pages/Recorder'
 import RecordingDetail from './pages/RecordingDetail'
@@ -8,11 +9,19 @@ import RecordingList from './pages/RecordingList'
 import ThemeSwitch from './pages/ThemeSwitch'
 import { useTheme } from './useTheme'
 
-const ACTIVE_STATUSES: Recording['status'][] = ['uploaded', 'transcribing', 'summarizing']
+const ACTIVE_STATUSES: Recording['status'][] = [
+  'uploaded',
+  'transcribing',
+  'summarizing',
+  'recording',
+]
+
+type RecordMode = 'upload' | 'live'
 
 function Dashboard({ userName }: { userName: string | null }) {
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [recordMode, setRecordMode] = useState<RecordMode>('upload')
   const pollTimer = useRef<number | null>(null)
   const { mode, setMode } = useTheme()
 
@@ -69,7 +78,25 @@ function Dashboard({ userName }: { userName: string | null }) {
 
       <main className="main">
         <div className="left-col">
-          <Recorder onUploaded={refresh} />
+          <div className="record-mode-tabs">
+            <button
+              className={`record-mode-tab ${recordMode === 'upload' ? 'active' : ''}`}
+              onClick={() => setRecordMode('upload')}
+            >
+              上传录音
+            </button>
+            <button
+              className={`record-mode-tab ${recordMode === 'live' ? 'active' : ''}`}
+              onClick={() => setRecordMode('live')}
+            >
+              实时录制
+            </button>
+          </div>
+          {recordMode === 'upload' ? (
+            <Recorder onUploaded={refresh} />
+          ) : (
+            <LiveRecorder onStarted={refresh} onFinished={refresh} />
+          )}
           <RecordingList
             recordings={recordings}
             selectedId={selectedId}

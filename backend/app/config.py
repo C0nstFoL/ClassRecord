@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     frontend_after_login_path: str = "/"
     cors_origins: str = ""  # 逗号分隔，开发环境下用于允许前端开发服务器跨域携带 cookie
+    disable_auth: bool = False  # 仅本地测试使用：跳过登录鉴权，生产环境必须保持 False
 
     # Session / Cookie
     session_cookie_name: str = "classrecord_session"
@@ -31,6 +32,11 @@ class Settings(BaseSettings):
     whisper_model_size: str = "large-v3"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+
+    # 实时流式转写
+    live_transcribe_interval_seconds: float = 5.0  # 累积多久音频后跑一次增量转写
+    live_segment_max_chars: int = 800  # 分段小结：转写文本累积达到该字数即触发
+    live_segment_max_seconds: float = 300.0  # 分段小结：距上次小结超过该时长即触发（取先到者）
 
     # LLM（OpenAI 兼容接口）
     llm_base_url: str = "https://api.openai.com/v1"

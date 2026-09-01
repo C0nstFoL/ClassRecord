@@ -22,8 +22,18 @@ class RecordingOut(BaseModel):
     transcript_text: str | None
     summary_text: str | None
     error_message: str | None
+    is_live: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class SegmentSummaryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    seq: int
+    text: str
+    created_at: datetime.datetime
 
 
 class AskQuestionIn(BaseModel):

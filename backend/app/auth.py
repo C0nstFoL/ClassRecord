@@ -6,7 +6,7 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, WebSocket, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -107,7 +107,21 @@ def get_or_create_user(db: Session, userinfo: dict) -> User:
     return user
 
 
+def _get_or_create_dev_user(db: Session) -> User:
+    """DISABLE_AUTH=true 时使用的本地测试用户，仅用于跳过登录调试。"""
+    sub = "dev-local-test-user"
+    user = db.query(User).filter(User.sub == sub).one_or_none()
+    if user is None:
+        user = User(sub=sub, email="dev@local.test", name="本地测试用户")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return user
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    if settings.disable_auth:
+        return _get_or_create_dev_user(db)
     user_id = request.session.get(USER_ID_SESSION_KEY)
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
@@ -115,3 +129,13 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
     return user
+
+
+def get_current_user_ws(websocket: WebSocket, db: Session) -> User | None:
+    """WebSocket 场景下从 session cookie 中获取当前用户，鉴权失败返回 None（由调用方关闭连接）。"""
+    if settings.disable_auth:
+        return _get_or_create_dev_user(db)
+    user_id = websocket.session.get(USER_ID_SESSION_KEY)
+    if not user_id:
+        return None
+    return db.get(User, user_id)

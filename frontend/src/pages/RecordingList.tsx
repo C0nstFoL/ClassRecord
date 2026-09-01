@@ -7,6 +7,7 @@ const STATUS_LABEL: Record<Recording['status'], string> = {
   summarizing: '总结中',
   completed: '已完成',
   failed: '处理失败',
+  recording: '实时录制中',
 }
 
 interface Props {
