@@ -36,7 +36,7 @@ app.add_middleware(
     secret_key=settings.app_secret_key,
     session_cookie=settings.session_cookie_name,
     max_age=settings.session_max_age,
-    same_site="lax",
+    same_site="none",  # Android App WebView 跨站 OIDC 回跳需携带 session cookie，Lax 会被 WebView 丢弃
     https_only=settings.cookie_secure,
 )
 

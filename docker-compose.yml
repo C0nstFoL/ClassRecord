@@ -5,8 +5,9 @@ services:
       dockerfile: Dockerfile
       network: host
     image: classrecord-backend:1.1.0
-    ports:
-      - "8002:8002"
+    # host 网络：Zitadel 在本机运行，bridge 网络经公网 IP 回环（hairpin）不通，
+    # host 模式下容器直接走宿主机网络栈，8002 端口直接监听在宿主机上
+    network_mode: host
     env_file:
       - ./backend/.env
     volumes:

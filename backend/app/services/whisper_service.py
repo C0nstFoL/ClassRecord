@@ -42,5 +42,14 @@ def get_model() -> WhisperModel:
 def transcribe_audio(file_path: str) -> str:
     """转写音频文件，返回拼接后的完整文本。"""
     model = get_model()
-    segments, _info = model.transcribe(file_path, language="zh", vad_filter=True)
+    kwargs: dict = {
+        "language": "zh",
+        "beam_size": 5,
+        "vad_filter": True,
+        # VAD 分段更宽松，避免把弱音/句尾切碎影响识别
+        "vad_parameters": {"min_silence_duration_ms": 700, "speech_pad_ms": 400},
+    }
+    if settings.whisper_initial_prompt:
+        kwargs["initial_prompt"] = settings.whisper_initial_prompt
+    segments, _info = model.transcribe(file_path, **kwargs)
     return "".join(segment.text for segment in segments).strip()

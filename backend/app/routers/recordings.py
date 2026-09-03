@@ -200,13 +200,18 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
     try:
         transcribe_task = asyncio.create_task(run_transcribe_loop())
         while True:
-            message = await websocket.receive()
+            try:
+                # 60 秒超时容错：客户端心跳间隔 30 秒，超时不意味着断连，继续等待
+                message = await asyncio.wait_for(websocket.receive(), timeout=60.0)
+            except asyncio.TimeoutError:
+                continue  # 客户端可能切后台暂时无数据，保持连接不断开
             if message["type"] == "websocket.disconnect":
                 break
             if "bytes" in message and message["bytes"] is not None:
                 session.write_chunk(message["bytes"])
             elif "text" in message and message["text"] == "stop":
                 break
+            # 忽略客户端心跳空字符串
     except WebSocketDisconnect:
         pass
     finally:

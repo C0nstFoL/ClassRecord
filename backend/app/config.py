@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     whisper_model_size: str = "large-v3"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+    # 领域热词提示（课程专有名词、人名、术语等，逗号或顿号分隔），
+    # 通过 initial_prompt 偏置识别结果，对专有名词准确率提升明显
+    whisper_initial_prompt: str = ""
 
     # 实时流式转写
     live_transcribe_interval_seconds: float = 5.0  # 累积多久音频后跑一次增量转写

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">课堂记录助手</string>
+    <string name="title_activity_main">课堂记录助手</string>
+    <string name="package_name">site.folink.classrecord</string>
+    <string name="custom_url_scheme">site.folink.classrecord</string>
+</resources>

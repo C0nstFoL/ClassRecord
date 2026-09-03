@@ -8,6 +8,10 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# pip 安装的 CUDA 运行库（cublas/cudnn）不在系统默认搜索路径，
+# ctranslate2 首次推理时才懒加载，需显式指定，否则报 libcublas.so.12 not found
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}
+
 COPY . .
 
 # 前端静态文件需在构建镜像前预先执行 `npm run build`，

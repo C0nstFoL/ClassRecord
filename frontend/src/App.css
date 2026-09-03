@@ -739,3 +739,37 @@
   box-shadow: 0 4px 12px var(--accent-border);
   box-sizing: border-box;
 }
+
+/* 下拉刷新指示器 */
+.pull-refresh-indicator {
+  position: fixed;
+  top: -40px;
+  left: 50%;
+  margin-left: -20px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  pointer-events: none;
+}
+
+.pull-refresh-spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-border, #ccc);
+  border-top-color: var(--accent, #4f6ef7);
+  animation: pull-spin 0.8s linear infinite;
+}
+
+.pull-refresh-spinner.ready {
+  border-top-color: #22c55e;
+}
+
+@keyframes pull-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

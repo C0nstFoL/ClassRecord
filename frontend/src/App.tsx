@@ -7,6 +7,7 @@ import Recorder from './pages/Recorder'
 import RecordingDetail from './pages/RecordingDetail'
 import RecordingList from './pages/RecordingList'
 import ThemeSwitch from './pages/ThemeSwitch'
+import { usePullToRefresh } from './usePullToRefresh'
 import { useTheme } from './useTheme'
 
 const ACTIVE_STATUSES: Recording['status'][] = [
@@ -24,6 +25,7 @@ function Dashboard({ userName }: { userName: string | null }) {
   const [recordMode, setRecordMode] = useState<RecordMode>('upload')
   const pollTimer = useRef<number | null>(null)
   const { mode, setMode } = useTheme()
+  const pull = usePullToRefresh()
 
   const refresh = useCallback(async () => {
     const list = await api.listRecordings()
@@ -59,6 +61,14 @@ function Dashboard({ userName }: { userName: string | null }) {
 
   return (
     <div className="app">
+      {pull > 0 && (
+        <div
+          className="pull-refresh-indicator"
+          style={{ transform: `translateY(${pull}px)` }}
+        >
+          <span className={`pull-refresh-spinner ${pull >= 80 ? 'ready' : ''}`} />
+        </div>
+      )}
       <header className="header">
         <h1>课堂记录助手</h1>
         <div>
