@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+.trae
 
 # Python
 backend/.venv/
