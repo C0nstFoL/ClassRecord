@@ -98,6 +98,13 @@
     align-items: stretch;
   }
 
+  /* 输入框字号 <16px 时 iOS 聚焦会自动放大页面，统一设为 16px 规避 */
+  .input,
+  .ask-input,
+  button.btn {
+    font-size: 16px;
+  }
+
   .detail-tabs,
   .record-mode-tabs {
     overflow-x: auto;

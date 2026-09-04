@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,7 +8,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 后台录制关键配置：激活 App 侧音频会话（playAndRecord）。
+        // WKWebView 的麦克风采集跑在 WebContent 进程里，App 切后台时
+        // 若 App 自身没有活跃音频会话，系统会连同采集一起挂起。
+        // 配合 Info.plist 的 UIBackgroundModes=audio，
+        // 保持会话活跃即可让锁屏/切后台时录制继续。
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
+        try? session.setActive(true)
         return true
     }
 
