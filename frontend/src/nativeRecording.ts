@@ -5,8 +5,9 @@ import {
 } from '@capawesome-team/capacitor-android-foreground-service'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 
-const isAndroidNative =
-  Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+const isNative = Capacitor.isNativePlatform()
+const platform = Capacitor.getPlatform()
+const isAndroidNative = isNative && platform === 'android'
 
 /**
  * 自定义原生插件：直接走 AndroidX ActivityResultContracts.RequestPermission 弹系统通知权限框。
@@ -71,32 +72,37 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 /**
- * 实时录制期间的原生保活（仅 Android App 生效，Web 端为空操作）：
- * 1. microphone 类型前台服务 —— 锁屏/切后台后系统不再挂起麦克风采集
- * 2. KeepAwake —— 保持 CPU 不休眠，兜底
+ * 实时录制期间的原生保活（Web 端为空操作）：
+ * - Android：microphone 前台服务（锁屏/切后台不挂起采集）+ KeepAwake 兜底
+ * - iOS：无前台服务机制，后台采集依靠 Info.plist 的 audio 后台模式，
+ *   这里通过 KeepAwake 禁用屏幕自动休眠作为兜底
  *
- * 若通知权限未授予，返回 false，由调用方阻断录制启动。
+ * Android 通知权限未授予时返回 false，由调用方阻断录制启动。
  */
 export async function startRecordingKeepAlive(): Promise<boolean> {
-  if (!isAndroidNative) return true
-  const granted = await ensureNotificationPermission()
-  if (!granted) {
-    console.warn('[前台服务] 通知权限未授予，不启动')
-    return false
+  if (!isNative) return true
+
+  if (isAndroidNative) {
+    const granted = await ensureNotificationPermission()
+    if (!granted) {
+      console.warn('[前台服务] 通知权限未授予，不启动')
+      return false
+    }
+    try {
+      await ForegroundService.startForegroundService({
+        title: '课堂记录助手',
+        body: '正在实时录制与转写课堂音频，请勿关闭应用',
+        id: 1,
+        smallIcon: 'ic_stat_recording',
+        serviceType: ServiceType.Microphone,
+      })
+      console.log('[前台服务] 已启动')
+    } catch (err) {
+      console.warn('[前台服务] 启动失败，后台录制可能中断', err)
+      return false
+    }
   }
-  try {
-    await ForegroundService.startForegroundService({
-      title: '课堂记录助手',
-      body: '正在实时录制与转写课堂音频，请勿关闭应用',
-      id: 1,
-      smallIcon: 'ic_stat_recording',
-      serviceType: ServiceType.Microphone,
-    })
-    console.log('[前台服务] 已启动')
-  } catch (err) {
-    console.warn('[前台服务] 启动失败，后台录制可能中断', err)
-    return false
-  }
+
   try {
     await KeepAwake.keepAwake()
     console.log('[KeepAwake] 已开启')
@@ -107,12 +113,14 @@ export async function startRecordingKeepAlive(): Promise<boolean> {
 }
 
 export async function stopRecordingKeepAlive(): Promise<void> {
-  if (!isAndroidNative) return
-  try {
-    await ForegroundService.stopForegroundService()
-    console.log('[前台服务] 已停止')
-  } catch (err) {
-    console.warn('[前台服务] 停止失败', err)
+  if (!isNative) return
+  if (isAndroidNative) {
+    try {
+      await ForegroundService.stopForegroundService()
+      console.log('[前台服务] 已停止')
+    } catch (err) {
+      console.warn('[前台服务] 停止失败', err)
+    }
   }
   try {
     await KeepAwake.allowSleep()
