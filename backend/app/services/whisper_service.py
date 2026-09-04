@@ -48,8 +48,13 @@ def transcribe_audio(file_path: str) -> str:
         "vad_filter": True,
         # VAD 分段更宽松，避免把弱音/句尾切碎影响识别
         "vad_parameters": {"min_silence_duration_ms": 700, "speech_pad_ms": 400},
+        # 不携带上文条件：中文长音频下该机制容易诱发重复/幻觉循环，
+        # 关闭后重复文本明显减少，单段识别质量由 beam_size + VAD 保障
+        "condition_on_previous_text": False,
     }
     if settings.whisper_initial_prompt:
-        kwargs["initial_prompt"] = settings.whisper_initial_prompt
+        # hotwords 直接偏置解码词表，对专有名词的命中率比 initial_prompt 更稳定
+        kwargs["hotwords"] = settings.whisper_initial_prompt
     segments, _info = model.transcribe(file_path, **kwargs)
-    return "".join(segment.text for segment in segments).strip()
+    # 按识别分段换行拼接，保留自然的语句边界，便于阅读与后续 LLM 处理
+    return "\n".join(segment.text.strip() for segment in segments).strip()

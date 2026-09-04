@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { startRecordingKeepAlive, stopRecordingKeepAlive, updateRecordingNotification } from '../nativeRecording'
 
@@ -223,7 +225,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
               <div className="live-panel-title">分段小结</div>
               {segments.map((seg) => (
                 <div key={seg.seq} className="live-segment-item">
-                  <div className="markdown-body">{seg.text}</div>
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.text}</ReactMarkdown>
+                  </div>
                 </div>
               ))}
             </div>

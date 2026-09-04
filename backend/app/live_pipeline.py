@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Recording, RecordingStatus, SegmentSummary
-from app.services.llm_service import summarize_transcript
+from app.services.llm_service import summarize_segment, summarize_transcript
 from app.services.whisper_service import transcribe_audio
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ async def generate_segment_summary(session: LiveSession) -> SegmentSummary | Non
         return None
     db = SessionLocal()
     try:
-        summary = await summarize_transcript(segment_text)
+        summary = await summarize_segment(segment_text)
         record = SegmentSummary(
             recording_id=session.recording_id,
             seq=session.segment_seq,
@@ -120,7 +120,7 @@ async def finalize_live_recording(recording_id: int) -> None:
             return
         try:
             _update_status(db, recording, RecordingStatus.SUMMARIZING)
-            summary = await summarize_transcript(recording.transcript_text)
+            summary = await summarize_transcript(recording.transcript_text, title=recording.title)
             _update_status(db, recording, RecordingStatus.COMPLETED, summary_text=summary)
         except Exception as exc:  # noqa: BLE001
             logger.exception("实时录制 %s 结束总结失败", recording_id)

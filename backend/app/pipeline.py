@@ -35,7 +35,7 @@ async def process_recording(recording_id: int, file_path: str) -> None:
             _update_status(db, recording, RecordingStatus.TRANSCRIBED, transcript_text=transcript)
 
             _update_status(db, recording, RecordingStatus.SUMMARIZING)
-            summary = await summarize_transcript(transcript)
+            summary = await summarize_transcript(transcript, title=recording.title)
             _update_status(db, recording, RecordingStatus.COMPLETED, summary_text=summary)
         except Exception as exc:  # noqa: BLE001 - 记录任意处理失败原因供前端展示
             logger.exception("处理录音 %s 失败", recording_id)
@@ -59,7 +59,7 @@ async def retry_summarize(recording_id: int) -> None:
 
         try:
             _update_status(db, recording, RecordingStatus.SUMMARIZING, error_message=None)
-            summary = await summarize_transcript(recording.transcript_text)
+            summary = await summarize_transcript(recording.transcript_text, title=recording.title)
             _update_status(db, recording, RecordingStatus.COMPLETED, summary_text=summary)
         except Exception as exc:  # noqa: BLE001
             logger.exception("重试总结录音 %s 失败", recording_id)
