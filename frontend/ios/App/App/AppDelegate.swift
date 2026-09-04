@@ -15,7 +15,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // 保持会话活跃即可让锁屏/切后台时录制继续。
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
-        try? session.setActive(true)
+        // 异步激活，避免阻塞主线程导致 UI 无响应警告
+        session.activate { _, _ in }
         return true
     }
 
