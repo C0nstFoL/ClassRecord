@@ -39,6 +39,11 @@ export interface SegmentSummary {
   created_at: string
 }
 
+export interface Preset {
+  key: string
+  label: string
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, {
     credentials: 'include',
@@ -76,10 +81,12 @@ export const api = {
       body: JSON.stringify({ question }),
     }),
   listQa: (id: number) => request<QaRecord[]>(`/api/recordings/${id}/qa`),
-  uploadRecording: (file: Blob, title: string, filename: string) => {
+  listPresets: () => request<Preset[]>('/api/recordings/presets'),
+  uploadRecording: (file: Blob, title: string, filename: string, preset: string) => {
     const form = new FormData()
     form.append('file', file, filename)
     form.append('title', title)
+    form.append('preset', preset)
     return request<Recording>('/api/recordings', { method: 'POST', body: form })
   },
   listSegments: (id: number) => request<SegmentSummary[]>(`/api/recordings/${id}/segments`),
@@ -88,8 +95,8 @@ export const api = {
     form.append('title', title)
     return request<Recording>('/api/recordings/live', { method: 'POST', body: form })
   },
-  liveStreamUrl: (id: number) => {
+  liveStreamUrl: (id: number, preset: string) => {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    return `${protocol}://${window.location.host}/api/recordings/ws/${id}/stream`
+    return `${protocol}://${window.location.host}/api/recordings/ws/${id}/stream?preset=${encodeURIComponent(preset)}`
   },
 }

@@ -31,7 +31,7 @@ async def process_recording(recording_id: int, file_path: str) -> None:
 
         try:
             _update_status(db, recording, RecordingStatus.TRANSCRIBING)
-            transcript = await asyncio.to_thread(transcribe_audio, file_path)
+            transcript = await asyncio.to_thread(transcribe_audio, file_path, preset)
             _update_status(db, recording, RecordingStatus.TRANSCRIBED, transcript_text=transcript)
 
             _update_status(db, recording, RecordingStatus.SUMMARIZING)

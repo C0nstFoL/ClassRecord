@@ -39,22 +39,35 @@ def get_model() -> WhisperModel:
     return _model
 
 
-def transcribe_audio(file_path: str) -> str:
-    """转写音频文件，返回拼接后的完整文本。"""
+def transcribe_audio(file_path: str, preset: str = "default") -> str:
+    """转写音频文件，返回拼接后的完整文本。preset 为课程热词预设 key。"""
     model = get_model()
     kwargs: dict = {
         "language": "zh",
         "beam_size": 5,
         "vad_filter": True,
-        # VAD 分段更宽松，避免把弱音/句尾切碎影响识别
-        "vad_parameters": {"min_silence_duration_ms": 700, "speech_pad_ms": 400},
-        # 不携带上文条件：中文长音频下该机制容易诱发重复/幻觉循环，
-        # 关闭后重复文本明显减少，单段识别质量由 beam_size + VAD 保障
-        "condition_on_previous_text": False,
+        # VAD 分段适中：太宽松会把停顿也划进语音，太紧会切碎句尾
+        "vad_parameters": {"min_silence_duration_ms": 500, "speech_pad_ms": 300},
+        # 携带上文条件：中文同音字高度依赖上下文，开启后跨段纠错明显提升准确率；
+        # 重复/幻觉循环通过下方三个阈值拦截（置信度低、静音、压缩比异常的段落直接丢弃）
+        "condition_on_previous_text": True,
+        "no_speech_threshold": 0.6,
+        "log_prob_threshold": -1.0,
+        "compression_ratio_threshold": 2.4,
     }
     if settings.whisper_initial_prompt:
+        # 显式配置的热词全局生效，优先级最高
+        preset_hotwords = settings.whisper_initial_prompt
+        preset_prompt = settings.whisper_initial_prompt
+    else:
+        preset_conf = settings.whisper_presets.get(preset) or settings.whisper_presets["default"]
+        preset_hotwords = preset_conf.get("hotwords", "")
+        preset_prompt = preset_conf.get("prompt", "")
+    if preset_hotwords:
         # hotwords 直接偏置解码词表，对专有名词的命中率比 initial_prompt 更稳定
-        kwargs["hotwords"] = settings.whisper_initial_prompt
+        kwargs["hotwords"] = preset_hotwords
+    if preset_prompt:
+        kwargs["initial_prompt"] = preset_prompt
     segments, _info = model.transcribe(file_path, **kwargs)
     # 按识别分段换行拼接，保留自然的语句边界，便于阅读与后续 LLM 处理
     return "\n".join(segment.text.strip() for segment in segments).strip()

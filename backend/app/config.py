@@ -33,8 +33,47 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     # 领域热词提示（课程专有名词、人名、术语等，逗号或顿号分隔），
-    # 通过 initial_prompt 偏置识别结果，对专有名词准确率提升明显
+    # 通过 initial_prompt 偏置识别结果，对专有名词准确率提升明显。
+    # 设置后全局生效，优先级高于下方按课程预设的热词
     whisper_initial_prompt: str = ""
+    # 按课程类型的热词预设：前端录制时选择，key 通过接口传入。
+    # 可在 .env 中以 JSON 覆盖，如 WHISPER_PRESETS='{"cs": {"label": "计算机", "hotwords": "...", "prompt": "..."}}'
+    whisper_presets: dict[str, dict[str, str]] = {
+        "default": {
+            "label": "默认增强",
+            "hotwords": "",
+            "prompt": "以下是普通话课堂录音的转写，内容为老师讲课与课堂讨论。",
+        },
+        "cs": {
+            "label": "计算机",
+            "hotwords": (
+                "Python、Java、C++、数据结构、算法、操作系统、计算机网络、数据库、"
+                "机器学习、深度学习、神经网络、大语言模型、前端、后端、Linux、Git、Docker"
+            ),
+            "prompt": "以下是大学计算机课堂的转写，内容涉及编程语言、数据结构、算法与计算机专业术语。",
+        },
+        "politics": {
+            "label": "思政课",
+            "hotwords": (
+                "马克思主义、毛泽东思想、中国特色社会主义、社会主义核心价值观、"
+                "唯物辩证法、实事求是、改革开放、现代化建设、思想道德修养、法治"
+            ),
+            "prompt": "以下是高校思想政治理论课的转写，内容涉及马克思主义理论与思想政治教育相关概念。",
+        },
+        "math": {
+            "label": "数学",
+            "hotwords": (
+                "极限、导数、积分、微分方程、矩阵、行列式、特征值、概率、"
+                "随机变量、期望、方差、向量空间、线性变换、级数"
+            ),
+            "prompt": "以下是大学数学课堂的转写，内容涉及微积分、线性代数与概率统计等数学概念。",
+        },
+        "english": {
+            "label": "英语",
+            "hotwords": "",
+            "prompt": "以下是大学英语课堂的转写，内容可能中英文混合，请正确保留英文单词与句子。",
+        },
+    }
 
     # 实时流式转写
     live_transcribe_interval_seconds: float = 5.0  # 累积多久音频后跑一次增量转写

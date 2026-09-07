@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { usePresets } from '../hooks/usePresets'
+import type { Preset } from '../api'
 
 interface Props {
   onUploaded: () => void
@@ -24,6 +26,8 @@ function formatSize(bytes: number) {
  */
 export default function Recorder({ onUploaded }: Props) {
   const [title, setTitle] = useState('')
+  const presets: Preset[] = usePresets()
+  const [preset, setPreset] = useState('default')
   const [isRecording, setIsRecording] = useState(false)
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -114,7 +118,7 @@ export default function Recorder({ onUploaded }: Props) {
     setUploading(true)
     try {
       const filename = selectedFile ? selectedFile.name : `recording-${Date.now()}.webm`
-      await api.uploadRecording(blob, title.trim(), filename)
+      await api.uploadRecording(blob, title.trim(), filename, preset)
       setTitle('')
       setRecordedBlob(null)
       setSelectedFile(null)
@@ -140,6 +144,20 @@ export default function Recorder({ onUploaded }: Props) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
+
+      <select
+        className="input"
+        value={preset}
+        onChange={(e) => setPreset(e.target.value)}
+        aria-label="课程内容类型"
+      >
+        {presets.length === 0 && <option value="default">默认增强</option>}
+        {presets.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
+          </option>
+        ))}
+      </select>
 
       <div className="row">
         {!isRecording ? (

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
+import { usePresets } from '../hooks/usePresets'
+import type { Preset } from '../api'
 import { startRecordingKeepAlive, stopRecordingKeepAlive, updateRecordingNotification } from '../nativeRecording'
 
 interface Props {
@@ -27,6 +29,8 @@ function formatDuration(totalSeconds: number) {
  */
 export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const [title, setTitle] = useState('')
+  const presets: Preset[] = usePresets()
+  const [preset, setPreset] = useState('default')
   const [isLive, setIsLive] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -87,7 +91,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     try {
       const recording = await api.createLiveRecording(title.trim())
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const ws = new WebSocket(api.liveStreamUrl(recording.id))
+      const ws = new WebSocket(api.liveStreamUrl(recording.id, preset))
       ws.binaryType = 'arraybuffer'
 
       ws.onopen = () => {
@@ -193,6 +197,21 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         onChange={(e) => setTitle(e.target.value)}
         disabled={isLive || connecting}
       />
+
+      <select
+        className="input"
+        value={preset}
+        onChange={(e) => setPreset(e.target.value)}
+        disabled={isLive || connecting}
+        aria-label="课程内容类型"
+      >
+        {presets.length === 0 && <option value="default">默认增强</option>}
+        {presets.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
+          </option>
+        ))}
+      </select>
 
       <div className="row">
         {!isLive ? (

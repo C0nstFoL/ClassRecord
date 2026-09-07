@@ -34,9 +34,10 @@ def _common_prefix_len(a: str, b: str) -> int:
 class LiveSession:
     """维护单次实时录制会话的状态（音频缓冲文件、累积转写文本、分段小结计时）。"""
 
-    def __init__(self, recording_id: int, audio_path: Path):
+    def __init__(self, recording_id: int, audio_path: Path, preset: str = "default"):
         self.recording_id = recording_id
         self.audio_path = audio_path
+        self.preset = preset
         self.transcript_text = ""
         self.last_segment_text_len = 0
         self.last_segment_time = time.monotonic()

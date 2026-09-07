@@ -41,6 +41,15 @@ async def list_recordings(user: User = Depends(get_current_user), db: Session = 
     )
 
 
+@router.get("/presets")
+async def list_presets(_user: User = Depends(get_current_user)):
+    """返回可选的课程热词预设（key + 展示名），供前端录制页下拉框使用。"""
+    return [
+        {"key": key, "label": conf.get("label", key)}
+        for key, conf in settings.whisper_presets.items()
+    ]
+
+
 @router.get("/{recording_id}", response_model=RecordingOut)
 async def get_recording(
     recording_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -175,7 +184,7 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         db.close()
 
     audio_path = Path(settings.storage_dir) / recording.filename
-    session = LiveSession(recording_id, audio_path)
+    session = LiveSession(recording_id, audio_path, preset=preset)
     transcribe_task: asyncio.Task | None = None
 
     async def run_transcribe_loop():
