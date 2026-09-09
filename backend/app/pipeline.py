@@ -22,7 +22,12 @@ def _update_status(db: Session, recording: Recording, status: RecordingStatus, *
     db.commit()
 
 
-async def process_recording(recording_id: int, file_path: str) -> None:
+async def process_recording(
+    recording_id: int,
+    file_path: str,
+    preset: str = "default",
+    language: str = "zh",
+) -> None:
     db = SessionLocal()
     try:
         recording = db.get(Recording, recording_id)
@@ -31,7 +36,9 @@ async def process_recording(recording_id: int, file_path: str) -> None:
 
         try:
             _update_status(db, recording, RecordingStatus.TRANSCRIBING)
-            transcript = await asyncio.to_thread(transcribe_audio, file_path, preset)
+            transcript = await asyncio.to_thread(
+                transcribe_audio, file_path, preset, language
+            )
             _update_status(db, recording, RecordingStatus.TRANSCRIBED, transcript_text=transcript)
 
             _update_status(db, recording, RecordingStatus.SUMMARIZING)

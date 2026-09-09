@@ -185,7 +185,7 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
           <span className="hint">
             {window.sessionStorage.getItem(`live-recording-${recording.id}`)
               ? '正在实时录制与转写...'
-              : '连接已断开，正在自动收尾生成总结...'}
+              : '正在由其他设备实时录制与转写...'}
           </span>
         </div>
       )}

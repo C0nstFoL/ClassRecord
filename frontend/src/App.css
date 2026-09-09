@@ -246,6 +246,17 @@
   overflow-y: auto;
 }
 
+.live-partial {
+  color: var(--text-secondary, #8a919f);
+  font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-partial {
+    transition: none;
+  }
+}
+
 .live-segments {
   display: flex;
   flex-direction: column;
@@ -505,12 +516,18 @@
 
 .error-box .error {
   margin: 0;
+  line-height: 1.6;
+  color: var(--text-h);
 }
 
 .text-block {
   white-space: pre-wrap;
-  line-height: 1.6;
-  color: var(--text-h);
+}
+
+.live-partial {
+  color: #999;
+  font-style: italic;
+  margin-left: 4px;
 }
 
 .markdown-body {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, LANGUAGES } from '../api'
 import { usePresets } from '../hooks/usePresets'
 import type { Preset } from '../api'
 
@@ -28,6 +28,7 @@ export default function Recorder({ onUploaded }: Props) {
   const [title, setTitle] = useState('')
   const presets: Preset[] = usePresets()
   const [preset, setPreset] = useState('default')
+  const [language, setLanguage] = useState('zh')
   const [isRecording, setIsRecording] = useState(false)
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -118,7 +119,7 @@ export default function Recorder({ onUploaded }: Props) {
     setUploading(true)
     try {
       const filename = selectedFile ? selectedFile.name : `recording-${Date.now()}.webm`
-      await api.uploadRecording(blob, title.trim(), filename, preset)
+      await api.uploadRecording(blob, title.trim(), filename, preset, language)
       setTitle('')
       setRecordedBlob(null)
       setSelectedFile(null)
@@ -144,6 +145,19 @@ export default function Recorder({ onUploaded }: Props) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
+
+      <select
+        className="input"
+        value={language}
+        onChange={(e) => setLanguage(e.target.value)}
+        aria-label="识别语言"
+      >
+        {LANGUAGES.map((l) => (
+          <option key={l.key} value={l.key}>
+            {l.label}
+          </option>
+        ))}
+      </select>
 
       <select
         className="input"

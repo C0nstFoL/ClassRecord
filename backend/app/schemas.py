@@ -23,6 +23,7 @@ class RecordingOut(BaseModel):
     summary_text: str | None
     error_message: str | None
     is_live: bool
+    language: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
 

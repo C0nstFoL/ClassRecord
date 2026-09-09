@@ -11,12 +11,16 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 from faster_whisper import WhisperModel
 
 from app.config import get_settings
+from app.services.sensevoice_service import transcribe_with_sensevoice
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
 _model: WhisperModel | None = None
 _model_lock = threading.Lock()
+
+# 中文/粤语走 SenseVoice（中文场景准确率与速度均优于 Whisper），其余语言走 Whisper
+SENSEVOICE_LANGUAGES = {"zh", "yue"}
 
 
 def get_model() -> WhisperModel:
@@ -39,11 +43,13 @@ def get_model() -> WhisperModel:
     return _model
 
 
-def transcribe_audio(file_path: str, preset: str = "default") -> str:
-    """转写音频文件，返回拼接后的完整文本。preset 为课程热词预设 key。"""
+def transcribe_audio(file_path: str, preset: str = "default", language: str = "zh") -> str:
+    """按语言路由转写：中文/粤语 → SenseVoice，其他语言 → Whisper。返回完整文本。"""
+    if language in SENSEVOICE_LANGUAGES:
+        return transcribe_with_sensevoice(file_path)
     model = get_model()
     kwargs: dict = {
-        "language": "zh",
+        "language": language,
         "beam_size": 5,
         "vad_filter": True,
         # VAD 分段适中：太宽松会把停顿也划进语音，太紧会切碎句尾

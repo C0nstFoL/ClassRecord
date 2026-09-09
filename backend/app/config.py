@@ -76,9 +76,16 @@ class Settings(BaseSettings):
     }
 
     # 实时流式转写
-    live_transcribe_interval_seconds: float = 5.0  # 累积多久音频后跑一次增量转写
+    live_transcribe_interval_seconds: float = 3.0  # 累积多久音频后跑一次增量转写
+    live_window_seconds: float = 30.0  # 锚定窗口：攒满该秒数即整体归档，锚点前移（无重叠，保证长课堂耗时恒定）
     live_segment_max_chars: int = 800  # 分段小结：转写文本累积达到该字数即触发
     live_segment_max_seconds: float = 300.0  # 分段小结：距上次小结超过该时长即触发（取先到者）
+
+    # SenseVoice（中文/粤语识别专用模型，准确率与速度均优于 Whisper）
+    # 首次使用时自动从 HF 镜像下载（约 235MB）到该目录
+    sensevoice_model_dir: str = "./data/models/sensevoice"
+    sensevoice_num_threads: int = 2
+    sensevoice_use_itn: bool = True
 
     # LLM（OpenAI 兼容接口）
     llm_base_url: str = "https://api.openai.com/v1"
