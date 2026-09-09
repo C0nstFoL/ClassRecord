@@ -13,9 +13,9 @@ import SherpaOnnx
  */
 @objc(NativeSpeechPlugin)
 public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
-    public let identifier = "NativeSpeechPlugin"
-    public let jsName = "NativeSpeech"
-    public let pluginMethods = [
+    public let identifier: String = "NativeSpeechPlugin"
+    public let jsName: String = "NativeSpeech"
+    public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "checkPermission", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestPermission", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
