@@ -24,6 +24,8 @@ function Dashboard({ userName }: { userName: string | null }) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [recordMode, setRecordMode] = useState<RecordMode>('upload')
   const pollTimer = useRef<number | null>(null)
+  // 移动端（<860px）双视图：false 显示列表，true 显示详情（带返回按钮）
+  const [mobileShowDetail, setMobileShowDetail] = useState(false)
   const { mode, setMode } = useTheme()
   const pull = usePullToRefresh()
 
@@ -49,12 +51,18 @@ function Dashboard({ userName }: { userName: string | null }) {
 
   const handleDelete = async (id: number) => {
     await api.deleteRecording(id)
-    if (selectedId === id) setSelectedId(null)
+    if (selectedId === id) {
+      setSelectedId(null)
+      setMobileShowDetail(false)
+    }
     refresh()
   }
 
   const handleSelect = (id: number) => {
-    setSelectedId((prev) => (prev === id ? null : id))
+    const next = selectedId === id ? null : id
+    setSelectedId(next)
+    setMobileShowDetail(next !== null)
+    if (next !== null) window.scrollTo({ top: 0 })
   }
 
   const selected = recordings.find((r) => r.id === selectedId) ?? null
@@ -86,7 +94,7 @@ function Dashboard({ userName }: { userName: string | null }) {
         </div>
       </header>
 
-      <main className="main">
+      <main className={`main ${mobileShowDetail ? 'mobile-show-detail' : ''}`}>
         <div className="left-col">
           <div className="record-mode-tabs">
             <button
@@ -115,6 +123,9 @@ function Dashboard({ userName }: { userName: string | null }) {
           />
         </div>
         <div className="right-col">
+          <button className="btn small mobile-back" onClick={() => setMobileShowDetail(false)}>
+            ← 返回列表
+          </button>
           <RecordingDetail recording={selected} onRetried={refresh} />
         </div>
       </main>

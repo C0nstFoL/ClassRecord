@@ -13,6 +13,8 @@ type Tab = 'summary' | 'transcript' | 'segments' | 'ask'
 export default function RecordingDetail({ recording, onRetried }: Props) {
   const [tab, setTab] = useState<Tab>('summary')
   const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
   const [askError, setAskError] = useState<string | null>(null)
@@ -32,6 +34,8 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
     setAskError(null)
     setQaHistory([])
     setSegments([])
+    setRetryError(null)
+    setCopied(null)
   }, [recording?.id])
 
   useEffect(() => {
@@ -76,13 +80,47 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
   const hasTranscript = Boolean(recording.transcript_text)
   const hasSegments = segments.length > 0
 
+  const copyText = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(key)
+      window.setTimeout(() => setCopied((prev) => (prev === key ? null : prev)), 2000)
+    } catch {
+      setCopied(null)
+    }
+  }
+
+  const exportMarkdown = () => {
+    const parts = [`# ${recording.title}`, '']
+    if (recording.summary_text) {
+      parts.push('## ✨ 课堂总结', '', recording.summary_text, '')
+    }
+    if (segments.length > 0) {
+      parts.push('## 🧩 分段小结', '')
+      segments.forEach((seg) => {
+        parts.push(seg.text, '')
+      })
+    }
+    if (recording.transcript_text) {
+      parts.push('## 📄 转写原文', '', recording.transcript_text, '')
+    }
+    const blob = new Blob([parts.join('\n')], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${recording.title}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleRetry = async () => {
     setRetrying(true)
+    setRetryError(null)
     try {
       await api.retryRecording(recording.id)
       onRetried?.()
     } catch (err) {
-      alert(err instanceof Error ? err.message : '重试失败')
+      setRetryError(err instanceof Error ? err.message : '重试失败')
     } finally {
       setRetrying(false)
     }
@@ -105,12 +143,35 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
   }
 
   return (
-    <div className="card detail-card">
+    // key 随录音 id 变化，切换记录时整卡重挂载以重放入场动画
+    <div className="card detail-card" key={recording.id}>
       <h2>{recording.title}</h2>
+
+      {(hasSummary || hasTranscript) && (
+        <div className="detail-actions">
+          <button
+            className="btn small"
+            onClick={() =>
+              copyText(
+                'all',
+                [recording.summary_text, recording.transcript_text]
+                  .filter(Boolean)
+                  .join('\n\n'),
+              )
+            }
+          >
+            {copied === 'all' ? '✓ 已复制' : '复制内容'}
+          </button>
+          <button className="btn small" onClick={exportMarkdown}>
+            导出 Markdown
+          </button>
+        </div>
+      )}
 
       {recording.status === 'failed' && (
         <div className="error-box">
           <p className="error">处理失败：{recording.error_message}</p>
+          {retryError && <p className="error">重试失败：{retryError}</p>}
           {hasTranscript && (
             <button className="btn small" onClick={handleRetry} disabled={retrying}>
               {retrying ? '重试中...' : '重试总结'}
@@ -124,7 +185,7 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
           <span className="hint">
             {window.sessionStorage.getItem(`live-recording-${recording.id}`)
               ? '正在实时录制与转写...'
-              : '连接已断开，正在自动收尾生成总结...'}
+              : '正在由其他设备实时录制与转写...'}
           </span>
         </div>
       )}
@@ -171,8 +232,13 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
       )}
 
       {tab === 'summary' && hasSummary && (
-        <div className="markdown-body summary-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
+        <div className="tab-with-action">
+          <div className="markdown-body summary-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
+          </div>
+          <button className="btn small copy-btn" onClick={() => copyText('summary', recording.summary_text ?? '')}>
+            {copied === 'summary' ? '✓ 已复制' : '复制'}
+          </button>
         </div>
       )}
 
@@ -189,7 +255,15 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
       )}
 
       {tab === 'transcript' && hasTranscript && (
-        <p className="text-block">{recording.transcript_text}</p>
+        <div className="tab-with-action">
+          <p className="text-block">{recording.transcript_text}</p>
+          <button
+            className="btn small copy-btn"
+            onClick={() => copyText('transcript', recording.transcript_text ?? '')}
+          >
+            {copied === 'transcript' ? '✓ 已复制' : '复制'}
+          </button>
+        </div>
       )}
 
       {tab === 'ask' && hasTranscript && (

@@ -2,16 +2,12 @@
   max-width: 1280px;
   width: 100%;
   margin: 0 auto;
-  padding: 24px 32px;
+  /* viewport-fit=cover 下内容会延伸进刘海/状态栏区域，需加上安全区内边距 */
+  padding: calc(24px + env(safe-area-inset-top)) calc(32px + env(safe-area-inset-right))
+    calc(24px + env(safe-area-inset-bottom)) calc(32px + env(safe-area-inset-left));
   color: var(--text);
   text-align: left;
   box-sizing: border-box;
-}
-
-@media (max-width: 640px) {
-  .app {
-    padding: 16px;
-  }
 }
 
 .header {
@@ -36,11 +32,82 @@
   display: grid;
   grid-template-columns: 420px 1fr;
   gap: 24px;
+  align-items: start;
+}
+
+/* 移动端返回列表按钮：桌面端隐藏 */
+.mobile-back {
+  display: none;
+  align-self: flex-start;
 }
 
 @media (max-width: 860px) {
   .main {
     grid-template-columns: 1fr;
+  }
+
+  /* 移动端双视图：默认只显示左栏（录制入口+列表），选中后切换到详情 */
+  .main .right-col {
+    display: none;
+  }
+
+  .main.mobile-show-detail .left-col {
+    display: none;
+  }
+
+  .main.mobile-show-detail .right-col {
+    display: flex;
+  }
+
+  .main.mobile-show-detail .mobile-back {
+    display: inline-block;
+  }
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+      calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+  }
+
+  .header {
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .header h1 {
+    font-size: 18px;
+  }
+
+  /* 手机上隐藏用户名文本，仅保留主题切换与退出按钮 */
+  .header .hint {
+    display: none;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  .detail-actions {
+    flex-wrap: wrap;
+  }
+
+  .error-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* 输入框字号 <16px 时 iOS 聚焦会自动放大页面，统一设为 16px 规避 */
+  .input,
+  .ask-input,
+  button.btn {
+    font-size: 16px;
+  }
+
+  .detail-tabs,
+  .record-mode-tabs {
+    overflow-x: auto;
   }
 }
 
@@ -177,6 +244,17 @@
 .live-transcript .text-block {
   max-height: 220px;
   overflow-y: auto;
+}
+
+.live-partial {
+  color: var(--text-secondary, #8a919f);
+  font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-partial {
+    transition: none;
+  }
 }
 
 .live-segments {
@@ -438,12 +516,18 @@
 
 .error-box .error {
   margin: 0;
+  line-height: 1.6;
+  color: var(--text-h);
 }
 
 .text-block {
   white-space: pre-wrap;
-  line-height: 1.6;
-  color: var(--text-h);
+}
+
+.live-partial {
+  color: #999;
+  font-style: italic;
+  margin-left: 4px;
 }
 
 .markdown-body {
@@ -683,15 +767,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
+    calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
   box-sizing: border-box;
   background: radial-gradient(circle at 50% -10%, var(--accent-bg), transparent 60%);
 }
 
 .login-theme-switch {
   position: absolute;
-  top: 24px;
-  right: 24px;
+  top: calc(24px + env(safe-area-inset-top));
+  right: calc(24px + env(safe-area-inset-right));
 }
 
 .login-card {
@@ -771,5 +856,102 @@
 @keyframes pull-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* 详情页操作按钮与标签页内复制按钮 */
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin: -8px 0 12px;
+}
+
+.tab-with-action {
+  position: relative;
+}
+
+.tab-with-action .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0.7;
+}
+
+.tab-with-action .copy-btn:hover {
+  opacity: 1;
+}
+
+/* 列表搜索框 */
+.list-search {
+  margin-bottom: 8px;
+}
+
+/* ===== 页面过渡动画 ===== */
+@keyframes fade-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 移动端列表 ⇄ 详情切换：双视图切换时 display 翻转会重放动画 */
+@media (max-width: 860px) {
+  .main.mobile-show-detail .right-col {
+    animation: slide-in-right 0.28s ease;
+  }
+
+  .main.mobile-show-detail .left-col,
+  .main:not(.mobile-show-detail) .left-col {
+    animation: fade-slide-in 0.28s ease;
+  }
+}
+
+/* 详情卡片随所选记录切换淡入 */
+.detail-card {
+  animation: fade-slide-in 0.25s ease;
+}
+
+/* 详情标签页/实时面板内容淡入（条件渲染下每次切换都会重挂载） */
+.detail-tabs,
+.tab-with-action,
+.live-segments,
+.ask-panel,
+.live-panel {
+  animation: fade-slide-in 0.2s ease;
+}
+
+/* 登录页入场 */
+.login-card {
+  animation: fade-slide-in 0.35s ease;
+}
+
+/* 尊重系统"减少动态效果"设置 */
+@media (prefers-reduced-motion: reduce) {
+  .main.mobile-show-detail .right-col,
+  .main.mobile-show-detail .left-col,
+  .main:not(.mobile-show-detail) .left-col,
+  .detail-card,
+  .detail-tabs,
+  .tab-with-action,
+  .live-segments,
+  .ask-panel,
+  .live-panel,
+  .login-card {
+    animation: none;
   }
 }

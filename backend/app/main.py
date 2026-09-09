@@ -28,7 +28,66 @@ logging.basicConfig(
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="ClassRecord")
+
+def _ensure_sqlite_columns() -> None:
+    """轻量迁移：为旧库补齐新增列（create_all 不会修改已存在的表）。"""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "recordings" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("recordings")}
+    with engine.begin() as conn:
+        if "language" not in columns:
+            conn.execute(text("ALTER TABLE recordings ADD COLUMN language VARCHAR(8) DEFAULT 'zh'"))
+
+
+def _fail_stale_recordings() -> None:
+    """把僵死的实时录制行标记为失败：App 被直接杀掉时 WebSocket 收尾不会执行，
+    status 会永远停在 recording，导致所有设备都显示「正在由其他设备录制」。
+    正常录制中的记录每 3 秒都会持久化转写并刷新 updated_at，不会命中 10 分钟阈值。
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                "UPDATE recordings SET status = 'failed', error_message = '录制会话异常中断' "
+                "WHERE status = 'recording' AND updated_at < datetime('now', '-600 seconds')"
+            )
+        )
+        if result.rowcount:
+            logging.getLogger(__name__).warning("已清理 %s 条僵死的录制状态记录", result.rowcount)
+
+
+_ensure_sqlite_columns()
+_fail_stale_recordings()
+
+import asyncio
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """每 5 分钟周期性清理僵死的录制状态行（App 异常退出时 WS 收尾不会执行）。"""
+    task = asyncio.create_task(_stale_recording_sweeper())
+    yield
+    task.cancel()
+
+
+async def _stale_recording_sweeper() -> None:
+    while True:
+        await asyncio.sleep(300)
+        try:
+            _fail_stale_recordings()
+        except Exception:
+            logging.getLogger(__name__).exception("周期清理僵死录制记录失败")
+
+
+app = FastAPI(title="ClassRecord", lifespan=lifespan)
 
 # 反向代理部署在 HTTPS 之后，cookie 需要 secure=True 且 samesite=lax 以支持 OIDC 回跳。
 app.add_middleware(

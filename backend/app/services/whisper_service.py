@@ -11,12 +11,16 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 from faster_whisper import WhisperModel
 
 from app.config import get_settings
+from app.services.sensevoice_service import transcribe_with_sensevoice
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
 _model: WhisperModel | None = None
 _model_lock = threading.Lock()
+
+# 中文/粤语走 SenseVoice（中文场景准确率与速度均优于 Whisper），其余语言走 Whisper
+SENSEVOICE_LANGUAGES = {"zh", "yue"}
 
 
 def get_model() -> WhisperModel:
@@ -39,17 +43,50 @@ def get_model() -> WhisperModel:
     return _model
 
 
-def transcribe_audio(file_path: str) -> str:
-    """转写音频文件，返回拼接后的完整文本。"""
+def transcribe_audio(file_path: str, preset: str = "default", language: str = "zh") -> str:
+    """按语言路由转写：中文/粤语 → SenseVoice，其他语言 → Whisper。返回完整文本。
+
+    preset 的热词两条路径都生效：SenseVoice 通过 create_stream(hotwords=...)，
+    Whisper 通过 hotwords + initial_prompt。
+    """
+    if settings.whisper_initial_prompt:
+        # 显式配置的全局热词优先级最高
+        preset_hotwords = settings.whisper_initial_prompt
+        preset_prompt = settings.whisper_initial_prompt
+    else:
+        preset_conf = settings.whisper_presets.get(preset) or settings.whisper_presets["default"]
+        preset_hotwords = preset_conf.get("hotwords", "")
+        preset_prompt = preset_conf.get("prompt", "")
+
+    if language in SENSEVOICE_LANGUAGES:
+        return transcribe_with_sensevoice(file_path, hotwords=preset_hotwords)
     model = get_model()
     kwargs: dict = {
-        "language": "zh",
+        "language": language,
         "beam_size": 5,
         "vad_filter": True,
-        # VAD 分段更宽松，避免把弱音/句尾切碎影响识别
-        "vad_parameters": {"min_silence_duration_ms": 700, "speech_pad_ms": 400},
+        # VAD 分段适中：太宽松会把停顿也划进语音，太紧会切碎句尾
+        "vad_parameters": {"min_silence_duration_ms": 500, "speech_pad_ms": 300},
+        # 携带上文条件：中文同音字高度依赖上下文，开启后跨段纠错明显提升准确率；
+        # 重复/幻觉循环通过下方三个阈值拦截（置信度低、静音、压缩比异常的段落直接丢弃）
+        "condition_on_previous_text": True,
+        "no_speech_threshold": 0.6,
+        "log_prob_threshold": -1.0,
+        "compression_ratio_threshold": 2.4,
     }
     if settings.whisper_initial_prompt:
-        kwargs["initial_prompt"] = settings.whisper_initial_prompt
+        # 显式配置的热词全局生效，优先级最高
+        preset_hotwords = settings.whisper_initial_prompt
+        preset_prompt = settings.whisper_initial_prompt
+    else:
+        preset_conf = settings.whisper_presets.get(preset) or settings.whisper_presets["default"]
+        preset_hotwords = preset_conf.get("hotwords", "")
+        preset_prompt = preset_conf.get("prompt", "")
+    if preset_hotwords:
+        # hotwords 直接偏置解码词表，对专有名词的命中率比 initial_prompt 更稳定
+        kwargs["hotwords"] = preset_hotwords
+    if preset_prompt:
+        kwargs["initial_prompt"] = preset_prompt
     segments, _info = model.transcribe(file_path, **kwargs)
-    return "".join(segment.text for segment in segments).strip()
+    # 按识别分段换行拼接，保留自然的语句边界，便于阅读与后续 LLM 处理
+    return "\n".join(segment.text.strip() for segment in segments).strip()

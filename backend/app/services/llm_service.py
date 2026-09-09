@@ -11,14 +11,32 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
-async def summarize_transcript(transcript_text: str) -> str:
+async def summarize_transcript(transcript_text: str, title: str | None = None) -> str:
+    if not settings.llm_api_key:
+        raise RuntimeError("未配置 LLM_API_KEY，请在环境变量中设置大模型 API Key")
+
+    user_content = (
+        f"课堂主题：{title}\n\n课堂语音转写文本：\n{transcript_text}"
+        if title
+        else transcript_text
+    )
+    return await _chat_completion(
+        [
+            {"role": "system", "content": settings.llm_summary_prompt},
+            {"role": "user", "content": user_content},
+        ]
+    )
+
+
+async def summarize_segment(segment_text: str) -> str:
+    """实时录制的分段小结：文本短、上下文少，使用轻量专用 prompt。"""
     if not settings.llm_api_key:
         raise RuntimeError("未配置 LLM_API_KEY，请在环境变量中设置大模型 API Key")
 
     return await _chat_completion(
         [
-            {"role": "system", "content": settings.llm_summary_prompt},
-            {"role": "user", "content": transcript_text},
+            {"role": "system", "content": settings.llm_segment_prompt},
+            {"role": "user", "content": segment_text},
         ]
     )
 

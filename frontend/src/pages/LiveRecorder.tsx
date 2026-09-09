@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { api, LANGUAGES } from '../api'
+import { usePresets } from '../hooks/usePresets'
+import type { Preset } from '../api'
 import { startRecordingKeepAlive, stopRecordingKeepAlive, updateRecordingNotification } from '../nativeRecording'
+import { isNativeSttSupported, nativeStt } from '../nativeStt'
 
 interface Props {
   onStarted: () => void
@@ -8,7 +13,7 @@ interface Props {
 }
 
 type DownMessage =
-  | { type: 'transcript_delta'; text: string }
+  | { type: 'transcript_full'; text: string }
   | { type: 'segment_summary'; seq: number; text: string }
   | { type: 'error'; message: string }
   | { type: 'done' }
@@ -24,12 +29,21 @@ function formatDuration(totalSeconds: number) {
  * 后端增量转写后推回文本，并在达到分段阈值时推回一段小结。
  */
 export default function LiveRecorder({ onStarted, onFinished }: Props) {
+  // 手机原生离线语音识别模式：客户端用内置中英模型识别后仅推送文字，服务器不做转写
+  const sttMode = isNativeSttSupported()
   const [title, setTitle] = useState('')
+  const presets: Preset[] = usePresets()
+  const [preset, setPreset] = useState('default')
+  const [language, setLanguage] = useState('zh')
+  // 内置离线模型仅支持中英双语：其他语言回落到音频推流 + 服务器端识别
+  const nativeSttActive = sttMode && (language === 'zh' || language === 'en')
+  const nativeSttActiveRef = useRef(false)
   const [isLive, setIsLive] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [transcript, setTranscript] = useState('')
+  const [partialText, setPartialText] = useState('')
   const [segments, setSegments] = useState<{ seq: number; text: string }[]>([])
   const [error, setError] = useState('')
 
@@ -55,7 +69,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [transcript])
+  }, [transcript, partialText])
 
   const cleanup = () => {
     if (timerRef.current) {
@@ -70,6 +84,8 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
     wsRef.current = null
+    if (nativeSttActiveRef.current) void nativeStt.stop()
+    nativeSttActiveRef.current = false
     void stopRecordingKeepAlive()
   }
 
@@ -83,35 +99,30 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     setTranscript('')
     setSegments([])
     try {
-      const recording = await api.createLiveRecording(title.trim())
+      const recording = await api.createLiveRecording(title.trim(), language)
+      nativeSttActiveRef.current = nativeSttActive
+      // 原生离线识别模式：识别在手机本地完成，先确保麦克风运行时权限已授予
+      if (nativeSttActive) {
+        const check = await nativeStt.checkPermission()
+        if (!check.granted) {
+          const req = await nativeStt.requestPermission()
+          if (!req.granted) {
+            setConnecting(false)
+            setError('未授予麦克风权限，无法使用语音识别')
+            return
+          }
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const ws = new WebSocket(api.liveStreamUrl(recording.id))
+      const ws = new WebSocket(api.liveStreamUrl(recording.id, preset))
       ws.binaryType = 'arraybuffer'
 
       ws.onopen = () => {
         window.sessionStorage.setItem(`live-recording-${recording.id}`, '1')
         elapsedRef.current = 0
         snippetRef.current = ''
-        const recorder = new MediaRecorder(stream)
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data)
-          }
-        }
-        recorder.start(2000)
-        mediaRecorderRef.current = recorder
-        streamRef.current = stream
-        // 必须等待通知权限 + 前台服务启动完成，否则切后台立刻被系统回收
-        startRecordingKeepAlive().then((keepAliveOk) => {
-          if (!keepAliveOk) {
-            // 通知权限未授予，停止已开始的录音与连接
-            recorder.stop()
-            stream.getTracks().forEach((t) => t.stop())
-            ws.close()
-            setConnecting(false)
-            setError('未授予通知权限，已取消录制')
-            return
-          }
+        // 通知权限 + 前台服务就绪后的公共启动流程（计时器 / 心跳 / 通知）
+        const finishStart = () => {
           setIsLive(true)
           setConnecting(false)
           setElapsedSeconds(0)
@@ -131,15 +142,75 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
             }
           }, 30000)
           onStarted()
+        }
+        const handleKeepAliveFailure = () => {
+          stream.getTracks().forEach((t) => t.stop())
+          ws.close()
+          setConnecting(false)
+          setError('未授予通知权限，已取消录制')
+        }
+
+        if (nativeSttActive) {
+          // 原生识别模式：释放 WebView 占用的麦克风，由本地离线模型接管
+          stream.getTracks().forEach((t) => t.stop())
+          streamRef.current = null
+          nativeStt.onPartial((text) => setPartialText(text))
+          nativeStt.onFinal((text) => {
+            setPartialText('')
+            if (!text) return
+            setTranscript((prev) => prev + text + ' ')
+            snippetRef.current = text
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'stt_text', text }))
+            }
+            void updateRecordingNotification(elapsedRef.current, text)
+          })
+          nativeStt.onError((msg) => setError(msg))
+          startRecordingKeepAlive().then((keepAliveOk) => {
+            if (!keepAliveOk) {
+              void nativeStt.stop()
+              handleKeepAliveFailure()
+              return
+            }
+            nativeStt.start(language === 'en' ? 'en-US' : 'zh-CN').catch((e) => {
+              ws.close()
+              setConnecting(false)
+              setError(e instanceof Error ? e.message : '启动语音识别失败')
+            })
+            finishStart()
+          })
+          return
+        }
+
+        // 音频推流模式（原逻辑）
+        const recorder = new MediaRecorder(stream)
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data)
+          }
+        }
+        recorder.start(2000)
+        mediaRecorderRef.current = recorder
+        streamRef.current = stream
+        // 必须等待通知权限 + 前台服务启动完成，否则切后台立刻被系统回收
+        startRecordingKeepAlive().then((keepAliveOk) => {
+          if (!keepAliveOk) {
+            // 通知权限未授予，停止已开始的录音与连接
+            recorder.stop()
+            handleKeepAliveFailure()
+            return
+          }
+          finishStart()
         })
       }
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data) as DownMessage
-        if (msg.type === 'transcript_delta') {
-          setTranscript((prev) => prev + msg.text)
-          snippetRef.current = msg.text
-          // 新增转写时同步刷新通知栏正文
+        if (msg.type === 'transcript_full') {
+          // 服务器周期性推送全量文本（可能修订更早的识别结果），整体替换渲染
+          setTranscript(msg.text)
+          snippetRef.current = msg.text.slice(-80)
+          // 转写更新时同步刷新通知栏正文
           void updateRecordingNotification(elapsedRef.current, snippetRef.current)
         } else if (msg.type === 'segment_summary') {
           setSegments((prev) => [...prev, { seq: msg.seq, text: msg.text }])
@@ -175,6 +246,16 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const stopLive = () => {
     // 立即反馈：后端还要收尾最后一段转写 + 生成整课总结，可能耗时较长
     setStopping(true)
+    if (nativeSttActiveRef.current) {
+      // 先停止本地识别，让最后一次 final 结果有机会推送到服务器，再通知收尾
+      void nativeStt.stop()
+      window.setTimeout(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send('stop')
+        }
+      }, 800)
+      return
+    }
     mediaRecorderRef.current?.stop()
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send('stop')
@@ -191,6 +272,36 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         onChange={(e) => setTitle(e.target.value)}
         disabled={isLive || connecting}
       />
+
+      <select
+        className="input"
+        value={language}
+        onChange={(e) => setLanguage(e.target.value)}
+        disabled={isLive || connecting}
+        aria-label="识别语言"
+      >
+        {LANGUAGES.map((l) => (
+          <option key={l.key} value={l.key}>
+            {l.label}
+          </option>
+        ))}
+      </select>
+
+      <select
+        className="input"
+        value={preset}
+        onChange={(e) => setPreset(e.target.value)}
+        disabled={isLive || connecting}
+        aria-label="课程内容类型"
+        hidden={nativeSttActive}
+      >
+        {presets.length === 0 && <option value="default">默认增强</option>}
+        {presets.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
+          </option>
+        ))}
+      </select>
 
       <div className="row">
         {!isLive ? (
@@ -223,7 +334,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
               <div className="live-panel-title">分段小结</div>
               {segments.map((seg) => (
                 <div key={seg.seq} className="live-segment-item">
-                  <div className="markdown-body">{seg.text}</div>
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.text}</ReactMarkdown>
+                  </div>
                 </div>
               ))}
             </div>
@@ -232,6 +345,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
             <div className="live-panel-title">实时转写</div>
             <p className="text-block">
               {transcript || '正在等待语音输入...'}
+              {partialText && <span className="live-partial">{partialText}</span>}
               <div ref={transcriptEndRef} />
             </p>
           </div>

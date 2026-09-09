@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -41,6 +42,15 @@ async def list_recordings(user: User = Depends(get_current_user), db: Session = 
     )
 
 
+@router.get("/presets")
+async def list_presets(_user: User = Depends(get_current_user)):
+    """返回可选的课程热词预设（key + 展示名），供前端录制页下拉框使用。"""
+    return [
+        {"key": key, "label": conf.get("label", key)}
+        for key, conf in settings.whisper_presets.items()
+    ]
+
+
 @router.get("/{recording_id}", response_model=RecordingOut)
 async def get_recording(
     recording_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -56,6 +66,8 @@ async def upload_recording(
     background_tasks: BackgroundTasks,
     file: UploadFile,
     title: str = Form(...),
+    preset: str = Form("default"),
+    language: str = Form("zh"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -75,12 +87,13 @@ async def upload_recording(
         title=title,
         filename=stored_name,
         status=RecordingStatus.UPLOADED,
+        language=language,
     )
     db.add(recording)
     db.commit()
     db.refresh(recording)
 
-    background_tasks.add_task(process_recording, recording.id, str(stored_path))
+    background_tasks.add_task(process_recording, recording.id, str(stored_path), preset, language)
 
     return recording
 
@@ -127,6 +140,7 @@ async def list_segments(
 @router.post("/live", response_model=RecordingOut)
 async def create_live_recording(
     title: str = Form(...),
+    language: str = Form("zh"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -138,6 +152,7 @@ async def create_live_recording(
         filename=stored_name,
         status=RecordingStatus.RECORDING,
         is_live=True,
+        language=language,
     )
     db.add(recording)
     db.commit()
@@ -153,7 +168,7 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
     - 二进制帧：音频数据块（webm/opus），按接收顺序追加写入同一音频文件。
     - 文本帧 "stop"：客户端主动结束录制，服务端完成最后一次转写与整体总结后关闭连接。
     - 服务端下行 JSON 消息：
-        {"type": "transcript_delta", "text": "..."}       增量转写文本
+        {"type": "transcript_full", "text": "..."}       全量转写文本（周期性整体刷新，含对前文的修订）
         {"type": "segment_summary", "seq": 0, "text": "..."} 分段小结
         {"type": "error", "message": "..."}                错误信息
         {"type": "done"}                                   整体总结已生成，可关闭连接
@@ -175,7 +190,10 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         db.close()
 
     audio_path = Path(settings.storage_dir) / recording.filename
-    session = LiveSession(recording_id, audio_path)
+    # 语言与热词预设由前端在录制开始前选定，通过 WS 查询参数传入
+    preset = websocket.query_params.get("preset", "default")
+    language = recording.language or "zh"
+    session = LiveSession(recording_id, audio_path, preset=preset, language=language)
     transcribe_task: asyncio.Task | None = None
 
     async def run_transcribe_loop():
@@ -187,7 +205,9 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
                 logger.exception("实时转写录音 %s 增量失败", recording_id)
                 continue
             if delta:
-                await websocket.send_json({"type": "transcript_delta", "text": delta})
+                # 以全量文本刷新前端：重新转写可能修正更早的识别结果，
+                # 整体替换才能呈现“逐字更新 + 修订”的效果
+                await websocket.send_json({"type": "transcript_full", "text": session.transcript_text})
                 _persist_transcript(recording_id, session.transcript_text)
                 if session.should_trigger_segment():
                     record = await generate_segment_summary(session)
@@ -211,20 +231,41 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
                 session.write_chunk(message["bytes"])
             elif "text" in message and message["text"] == "stop":
                 break
+            elif "text" in message and message["text"]:
+                # 原生 STT 模式：客户端识别出文本后以 JSON 文本帧推送 {"type":"stt_text","text":"..."}
+                # 服务器只做持久化 + 分段小结 + 整课总结，不做 Whisper 转写、不写音频
+                try:
+                    data = json.loads(message["text"])
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(data, dict) or data.get("type") != "stt_text":
+                    continue
+                text = (data.get("text") or "").strip()
+                if not text:
+                    continue
+                session.append_text(text + " ")
+                _persist_transcript(recording_id, session.transcript_text)
+                if session.should_trigger_segment():
+                    record = await generate_segment_summary(session)
+                    if record is not None:
+                        session.mark_segment_done()
+                        await websocket.send_json(
+                            {"type": "segment_summary", "seq": record.seq, "text": record.text}
+                        )
             # 忽略客户端心跳空字符串
     except WebSocketDisconnect:
         pass
     finally:
         if transcribe_task is not None:
             transcribe_task.cancel()
-        session.close_file()
-        # 结束前再跑一次转写，确保收尾的音频片段也被识别
+        # 结束前再跑一次转写，确保收尾的音频片段也被识别（需在文件关闭前执行）
         try:
             delta = await session.transcribe_increment()
             if delta:
                 _persist_transcript(recording_id, session.transcript_text)
         except Exception:
             logger.exception("实时转写录音 %s 收尾转写失败", recording_id)
+        session.close_file()
 
         try:
             await websocket.send_json({"type": "done"})
