@@ -16,11 +16,11 @@ interface NativeSpeechPlugin {
 const NativeSpeech = registerPlugin<NativeSpeechPlugin>('NativeSpeech')
 
 /**
- * 手机系统语音识别：仅 Android 原生 App 可用（iOS 端后续用 SFSpeechRecognizer 实现）。
+ * 内置离线语音识别（Android / iOS 原生 App 均可用，内置中英双语流式模型）。
  * Web / 浏览器环境返回 false，走原有的 MediaRecorder 音频推流模式。
  */
 export function isNativeSttSupported(): boolean {
-  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+  return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NativeSpeech')
 }
 
 export const nativeStt = {
