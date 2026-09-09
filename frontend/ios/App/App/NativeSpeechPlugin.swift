@@ -14,7 +14,7 @@ import SherpaOnnx
 @objc(NativeSpeechPlugin)
 public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "NativeSpeechPlugin"
-    public let pluginName = "NativeSpeech"
+    public let jsName = "NativeSpeech"
     public let pluginMethods = [
         CAPPluginMethod(name: "checkPermission", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestPermission", returnType: CAPPluginReturnPromise),
@@ -68,7 +68,6 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
             try session.setActive(true)
 
             let rec = try Self.createRecognizer()
-            try engine.setActive(true)
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             // 16kHz 单声道：与模型输入一致
@@ -76,8 +75,8 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("音频输入不可用")
                 return
             }
-            let tapFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
-            engine.installTap(onBus: 0, bufferSize: 1600, format: tapFormat) { [weak self] buffer, _ in
+            let tapFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false)!
+            input.installTap(onBus: 0, bufferSize: 1600, format: tapFormat) { [weak self] buffer, _ in
                 guard let self, self.running.get() else { return }
                 guard let channel = buffer.floatChannelData?[0] else { return }
                 let frames = Int(buffer.frameLength)
@@ -89,7 +88,7 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin {
             recognizer = rec
             lastPartial = ""
             running.set()
-            engine.start()
+            try engine.start()
             call.resolve()
         } catch {
             running.clear()
