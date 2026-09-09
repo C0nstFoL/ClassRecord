@@ -67,11 +67,20 @@ def get_recognizer():
     return _recognizer
 
 
-def transcribe_with_sensevoice(file_path: str) -> str:
-    """转写音频文件（任意 ffmpeg 支持的格式），返回纯文本。"""
+def transcribe_with_sensevoice(file_path: str, hotwords: str = "") -> str:
+    """转写音频文件（任意 ffmpeg 支持的格式），返回纯文本。
+
+    hotwords：逗号/顿号分隔的热词表（课程场景预设），通过上下文偏置提升
+    专有名词命中率；为空时不启用。
+    """
     recognizer = get_recognizer()
     samples, sample_rate = _decode_audio(file_path)
-    stream = recognizer.create_stream()
+    if hotwords:
+        # 统一分隔符为逗号（sherpa-onnx 要求逗号分隔）
+        normalized = re.sub(r"[、，\s]+", ",", hotwords.strip()).strip(",")
+        stream = recognizer.create_stream(normalized)
+    else:
+        stream = recognizer.create_stream()
     stream.accept_waveform(sample_rate, samples)
     recognizer.decode_stream(stream)
     text = _TAG_RE.sub("", stream.result.text).strip()

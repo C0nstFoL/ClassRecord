@@ -44,9 +44,22 @@ def get_model() -> WhisperModel:
 
 
 def transcribe_audio(file_path: str, preset: str = "default", language: str = "zh") -> str:
-    """按语言路由转写：中文/粤语 → SenseVoice，其他语言 → Whisper。返回完整文本。"""
+    """按语言路由转写：中文/粤语 → SenseVoice，其他语言 → Whisper。返回完整文本。
+
+    preset 的热词两条路径都生效：SenseVoice 通过 create_stream(hotwords=...)，
+    Whisper 通过 hotwords + initial_prompt。
+    """
+    if settings.whisper_initial_prompt:
+        # 显式配置的全局热词优先级最高
+        preset_hotwords = settings.whisper_initial_prompt
+        preset_prompt = settings.whisper_initial_prompt
+    else:
+        preset_conf = settings.whisper_presets.get(preset) or settings.whisper_presets["default"]
+        preset_hotwords = preset_conf.get("hotwords", "")
+        preset_prompt = preset_conf.get("prompt", "")
+
     if language in SENSEVOICE_LANGUAGES:
-        return transcribe_with_sensevoice(file_path)
+        return transcribe_with_sensevoice(file_path, hotwords=preset_hotwords)
     model = get_model()
     kwargs: dict = {
         "language": language,
