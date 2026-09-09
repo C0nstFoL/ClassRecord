@@ -54,8 +54,8 @@ def _fail_stale_recordings() -> None:
     with engine.begin() as conn:
         result = conn.execute(
             text(
-                "UPDATE recordings SET status = 'failed', error_message = '录制会话异常中断' "
-                "WHERE status = 'recording' AND updated_at < datetime('now', '-600 seconds')"
+                "UPDATE recordings SET status = 'FAILED', error_message = '录制会话异常中断' "
+                "WHERE status = 'RECORDING' AND updated_at < datetime('now', '-600 seconds')"
             )
         )
         if result.rowcount:
