@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core'
+import { registerPlugin } from '@capacitor/core'
 import type { PluginListenerHandle } from '@capacitor/core'
 
 interface NativeSpeechPlugin {
@@ -16,11 +16,12 @@ interface NativeSpeechPlugin {
 const NativeSpeech = registerPlugin<NativeSpeechPlugin>('NativeSpeech')
 
 /**
- * 内置离线语音识别（Android / iOS 原生 App 均可用，内置中英双语流式模型）。
- * Web / 浏览器环境返回 false，走原有的 MediaRecorder 音频推流模式。
+ * 内置离线语音识别已下线：应用轻量化后统一走音频推流 + 服务器端转写
+ * （中文/粤语 SenseVoice，其他语言 Whisper）。插件代码保留在仓库历史中，
+ * 需要离线能力时可从 git 历史恢复（commit 8795340 / 7f7a755 之前）。
  */
 export function isNativeSttSupported(): boolean {
-  return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NativeSpeech')
+  return false
 }
 
 export const nativeStt = {
