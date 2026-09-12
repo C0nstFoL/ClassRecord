@@ -1,7 +1,10 @@
 import asyncio
+import datetime
 import json
 import logging
+import secrets
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import (
@@ -22,7 +25,15 @@ from app.database import SessionLocal, get_db
 from app.live_pipeline import LiveSession, finalize_live_recording, generate_segment_summary
 from app.models import QaRecord, Recording, RecordingStatus, User
 from app.pipeline import process_recording, retry_summarize
-from app.schemas import AskQuestionIn, QaRecordOut, RecordingOut, SegmentSummaryOut
+from app.schemas import (
+    AskQuestionIn,
+    QaRecordOut,
+    RecordingOut,
+    RecordingUpdateIn,
+    SegmentSummaryOut,
+    ShareLinkIn,
+    ShareLinkOut,
+)
 from app.services.llm_service import answer_question
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
@@ -58,6 +69,65 @@ async def get_recording(
     recording = db.get(Recording, recording_id)
     if recording is None or recording.user_id != user.id:
         raise HTTPException(status_code=404, detail="记录不存在")
+    return recording
+
+
+@router.patch("/{recording_id}", response_model=RecordingOut)
+async def update_recording(
+    recording_id: int,
+    payload: RecordingUpdateIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """修改记录标题。"""
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+    recording.title = title[:255]
+    db.add(recording)
+    db.commit()
+    db.refresh(recording)
+    return recording
+
+
+@router.post("/{recording_id}/share", response_model=ShareLinkOut)
+async def create_share_link(
+    recording_id: int,
+    payload: ShareLinkIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """生成限时分享链接：随机 token，到期后自动失效；重复生成会替换旧链接。"""
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if payload.hours not in (24, 72, 168):
+        raise HTTPException(status_code=400, detail="有效期仅支持 24 / 72 / 168 小时")
+    recording.share_token = secrets.token_urlsafe(24)
+    recording.share_expires_at = datetime.datetime.utcnow() + timedelta(hours=payload.hours)
+    db.add(recording)
+    db.commit()
+    return ShareLinkOut(token=recording.share_token, expires_at=recording.share_expires_at)
+
+
+@router.delete("/{recording_id}/share", response_model=RecordingOut)
+async def revoke_share_link(
+    recording_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """撤销分享链接：清空 token，链接立即失效。"""
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    recording.share_token = None
+    recording.share_expires_at = None
+    db.add(recording)
+    db.commit()
+    db.refresh(recording)
     return recording
 
 

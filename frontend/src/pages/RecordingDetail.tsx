@@ -6,11 +6,12 @@ import { api, type QaRecord, type Recording, type SegmentSummary } from '../api'
 interface Props {
   recording: Recording | null
   onRetried?: () => void
+  onChanged?: () => void
 }
 
 type Tab = 'summary' | 'transcript' | 'segments' | 'ask'
 
-export default function RecordingDetail({ recording, onRetried }: Props) {
+export default function RecordingDetail({ recording, onRetried, onChanged }: Props) {
   const [tab, setTab] = useState<Tab>('summary')
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
@@ -21,6 +22,18 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
   const [qaHistory, setQaHistory] = useState<QaRecord[]>([])
   const [qaLoading, setQaLoading] = useState(false)
   const [segments, setSegments] = useState<SegmentSummary[]>([])
+  // 重命名
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [titleBusy, setTitleBusy] = useState(false)
+  const [titleError, setTitleError] = useState<string | null>(null)
+  // 分享链接
+  const [showShare, setShowShare] = useState(false)
+  const [shareHours, setShareHours] = useState(24)
+  const [shareLink, setShareLink] = useState<string | null>(null)
+  const [shareExpires, setShareExpires] = useState<Date | null>(null)
+  const [shareBusy, setShareBusy] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
 
   useEffect(() => {
     if (recording?.summary_text) {
@@ -36,6 +49,12 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
     setSegments([])
     setRetryError(null)
     setCopied(null)
+    setEditingTitle(false)
+    setTitleError(null)
+    setShowShare(false)
+    setShareLink(null)
+    setShareExpires(null)
+    setShareError(null)
   }, [recording?.id])
 
   useEffect(() => {
@@ -142,10 +161,102 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
     }
   }
 
+  const startEditTitle = () => {
+    setTitleDraft(recording.title)
+    setEditingTitle(true)
+    setTitleError(null)
+  }
+
+  const handleRename = async () => {
+    const title = titleDraft.trim()
+    if (!title || titleBusy) return
+    setTitleBusy(true)
+    setTitleError(null)
+    try {
+      await api.renameRecording(recording.id, title)
+      setEditingTitle(false)
+      onChanged?.()
+    } catch (err) {
+      setTitleError(err instanceof Error ? err.message : '重命名失败')
+    } finally {
+      setTitleBusy(false)
+    }
+  }
+
+  const handleCreateShare = async () => {
+    if (shareBusy) return
+    setShareBusy(true)
+    setShareError(null)
+    try {
+      const res = await api.createShareLink(recording.id, shareHours)
+      setShareLink(`${window.location.origin}/s/${res.token}`)
+      setShareExpires(new Date(res.expires_at))
+      onChanged?.()
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : '生成分享链接失败')
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
+  const handleRevokeShare = async () => {
+    if (shareBusy) return
+    setShareBusy(true)
+    setShareError(null)
+    try {
+      await api.revokeShareLink(recording.id)
+      setShareLink(null)
+      setShareExpires(null)
+      onChanged?.()
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : '撤销分享失败')
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
   return (
     // key 随录音 id 变化，切换记录时整卡重挂载以重放入场动画
     <div className="card detail-card" key={recording.id}>
-      <h2>{recording.title}</h2>
+      {editingTitle ? (
+        <div className="rename-row">
+          <input
+            type="text"
+            className="ask-input"
+            value={titleDraft}
+            autoFocus
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleRename()
+              } else if (e.key === 'Escape') {
+                setEditingTitle(false)
+              }
+            }}
+            disabled={titleBusy}
+          />
+          <button className="btn small" onClick={handleRename} disabled={titleBusy || !titleDraft.trim()}>
+            {titleBusy ? '保存中...' : '保存'}
+          </button>
+          <button className="btn small" onClick={() => setEditingTitle(false)} disabled={titleBusy}>
+            取消
+          </button>
+        </div>
+      ) : (
+        <div className="title-row">
+          <h2>{recording.title}</h2>
+          <button
+            className="btn small icon-btn"
+            title="重命名"
+            onClick={startEditTitle}
+            disabled={recording.status === 'recording'}
+          >
+            ✏️
+          </button>
+        </div>
+      )}
+      {titleError && <p className="error">{titleError}</p>}
 
       {(hasSummary || hasTranscript) && (
         <div className="detail-actions">
@@ -165,6 +276,55 @@ export default function RecordingDetail({ recording, onRetried }: Props) {
           <button className="btn small" onClick={exportMarkdown}>
             导出 Markdown
           </button>
+          <button
+            className="btn small"
+            onClick={() => {
+              setShowShare((v) => !v)
+              setShareError(null)
+            }}
+          >
+            {showShare ? '收起分享' : '🔗 分享'}
+          </button>
+        </div>
+      )}
+
+      {showShare && (
+        <div className="share-panel">
+          {shareExpires && (
+            <p className="hint share-active-hint">
+              链接分享中，有效期至{' '}
+              {shareExpires.toLocaleString('zh-CN', { hour12: false })}
+            </p>
+          )}
+          {shareLink && (
+            <div className="share-link-row">
+              <input type="text" className="ask-input" readOnly value={shareLink} onFocus={(e) => e.target.select()} />
+              <button className="btn small" onClick={() => copyText('share', shareLink)}>
+                {copied === 'share' ? '✓ 已复制' : '复制链接'}
+              </button>
+            </div>
+          )}
+          <div className="share-controls">
+            <select
+              className="ask-input share-hours"
+              value={shareHours}
+              onChange={(e) => setShareHours(Number(e.target.value))}
+            >
+              <option value={24}>24 小时</option>
+              <option value={72}>3 天</option>
+              <option value={168}>7 天</option>
+            </select>
+            <button className="btn small" onClick={handleCreateShare} disabled={shareBusy}>
+              {shareBusy ? '处理中...' : shareExpires ? '重新生成链接' : '生成分享链接'}
+            </button>
+            {shareExpires && (
+              <button className="btn small danger" onClick={handleRevokeShare} disabled={shareBusy}>
+                撤销分享
+              </button>
+            )}
+          </div>
+          <p className="hint">访问链接的人无需登录即可查看本记录的总结与转写内容</p>
+          {shareError && <p className="error">{shareError}</p>}
         </div>
       )}
 

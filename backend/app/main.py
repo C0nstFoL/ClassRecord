@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import Base, engine
 from app.routers import auth as auth_router
 from app.routers import recordings as recordings_router
+from app.routers import share as share_router
 
 settings = get_settings()
 
@@ -42,6 +43,10 @@ def _ensure_sqlite_columns() -> None:
     with engine.begin() as conn:
         if "language" not in columns:
             conn.execute(text("ALTER TABLE recordings ADD COLUMN language VARCHAR(8) DEFAULT 'zh'"))
+        if "share_token" not in columns:
+            conn.execute(text("ALTER TABLE recordings ADD COLUMN share_token VARCHAR(64)"))
+        if "share_expires_at" not in columns:
+            conn.execute(text("ALTER TABLE recordings ADD COLUMN share_expires_at DATETIME"))
 
 
 def _fail_stale_recordings() -> None:
@@ -110,6 +115,7 @@ if settings.cors_origin_list:
 
 app.include_router(auth_router.router)
 app.include_router(recordings_router.router)
+app.include_router(share_router.router)
 
 frontend_dist = Path(__file__).resolve().parent.parent / "static"
 if frontend_dist.exists():

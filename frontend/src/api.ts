@@ -22,8 +22,18 @@ export interface Recording {
   error_message: string | null
   is_live: boolean
   language: string
+  share_expires_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface SharedRecording {
+  title: string
+  language: string
+  transcript_text: string | null
+  summary_text: string | null
+  segments: { seq: number; text: string }[]
+  expires_at: string
 }
 
 export interface QaRecord {
@@ -64,8 +74,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (resp.status === 401) {
       throw new UnauthorizedError()
     }
-    const text = await resp.text()
-    throw new Error(text || `请求失败：${resp.status}`)
+    // FastAPI 错误响应为 {"detail": "..."}，尽量提取可读信息
+    let message = `请求失败：${resp.status}`
+    try {
+      const data = await resp.json()
+      if (typeof data?.detail === 'string') message = data.detail
+    } catch {
+      /* 保留默认错误信息 */
+    }
+    throw new Error(message)
   }
   return resp.json() as Promise<T>
 }
@@ -83,6 +100,22 @@ export const api = {
   getRecording: (id: number) => request<Recording>(`/api/recordings/${id}`),
   deleteRecording: (id: number) =>
     request<{ ok: boolean }>(`/api/recordings/${id}`, { method: 'DELETE' }),
+  renameRecording: (id: number, title: string) =>
+    request<Recording>(`/api/recordings/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+  createShareLink: (id: number, hours: number) =>
+    request<{ token: string; expires_at: string }>(`/api/recordings/${id}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours }),
+    }),
+  revokeShareLink: (id: number) =>
+    request<Recording>(`/api/recordings/${id}/share`, { method: 'DELETE' }),
+  // 免登录的公开接口，token 即凭据
+  getSharedRecording: (token: string) => request<SharedRecording>(`/api/share/${token}`),
   retryRecording: (id: number) =>
     request<Recording>(`/api/recordings/${id}/retry`, { method: 'POST' }),
   askQuestion: (id: number, question: string) =>

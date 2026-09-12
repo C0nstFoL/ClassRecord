@@ -24,8 +24,41 @@ class RecordingOut(BaseModel):
     error_message: str | None
     is_live: bool
     language: str
+    share_expires_at: datetime.datetime | None
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class RecordingUpdateIn(BaseModel):
+    title: str
+
+
+class ShareLinkIn(BaseModel):
+    # 分享有效期（小时）：24 / 72 / 168
+    hours: int
+
+
+class ShareLinkOut(BaseModel):
+    token: str
+    expires_at: datetime.datetime
+
+
+class SharedSegmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    seq: int
+    text: str
+
+
+class SharedRecordingOut(BaseModel):
+    """免登录分享页可见的内容（只读，不含用户信息与提问功能）。"""
+
+    title: str
+    language: str
+    transcript_text: str | None
+    summary_text: str | None
+    segments: list[SharedSegmentOut]
+    expires_at: datetime.datetime
 
 
 class SegmentSummaryOut(BaseModel):

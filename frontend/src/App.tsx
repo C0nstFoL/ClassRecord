@@ -6,6 +6,7 @@ import LoginGate from './pages/LoginGate'
 import Recorder from './pages/Recorder'
 import RecordingDetail from './pages/RecordingDetail'
 import RecordingList from './pages/RecordingList'
+import SharePage from './pages/SharePage'
 import ThemeSwitch from './pages/ThemeSwitch'
 import { usePullToRefresh } from './usePullToRefresh'
 import { useTheme } from './useTheme'
@@ -126,7 +127,7 @@ function Dashboard({ userName }: { userName: string | null }) {
           <button className="btn small mobile-back" onClick={() => setMobileShowDetail(false)}>
             ← 返回列表
           </button>
-          <RecordingDetail recording={selected} onRetried={refresh} />
+          <RecordingDetail recording={selected} onRetried={refresh} onChanged={refresh} />
         </div>
       </main>
     </div>
@@ -134,5 +135,10 @@ function Dashboard({ userName }: { userName: string | null }) {
 }
 
 export default function App() {
+  // 分享链接路由（/s/{token}）：无需登录，SPA fallback 会把该路径交给前端处理
+  const shareMatch = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)\/?$/)
+  if (shareMatch) {
+    return <SharePage token={shareMatch[1]} />
+  }
   return <LoginGate>{(user) => <Dashboard userName={user.name ?? user.email} />}</LoginGate>
 }

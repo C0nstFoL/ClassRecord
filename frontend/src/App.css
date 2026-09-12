@@ -955,3 +955,99 @@
     animation: none;
   }
 }
+/* ===== 记录重命名 ===== */
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.title-row h2 {
+  flex: 1;
+  word-break: break-word;
+}
+
+.icon-btn {
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+
+.rename-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rename-row .ask-input {
+  flex: 1;
+}
+
+/* ===== 分享面板 ===== */
+.share-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--social-bg);
+  margin-bottom: 12px;
+  animation: fade-slide-in 0.2s ease;
+}
+
+.share-link-row,
+.share-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.share-link-row .ask-input {
+  flex: 1;
+  min-width: 200px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.share-hours {
+  width: auto;
+  min-width: 110px;
+}
+
+.share-active-hint {
+  color: var(--success);
+}
+
+/* ===== 免登录分享页 ===== */
+.share-page {
+  min-height: 100svh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.share-card {
+  width: 100%;
+  max-width: 860px;
+  text-align: left;
+  animation: fade-slide-in 0.35s ease;
+}
+
+.share-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-panel,
+  .share-card {
+    animation: none;
+  }
+}
