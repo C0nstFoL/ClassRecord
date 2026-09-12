@@ -53,9 +53,12 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     setTitleError(null)
     setShowShare(false)
     setShareLink(null)
-    setShareExpires(null)
+    // 刷新页面后 token 不会回传（安全考虑），但需要从后端已有的过期时间
+    // 恢复"分享中"状态，否则撤销按钮不会出现
+    const expiresAt = recording?.share_expires_at ? new Date(recording.share_expires_at) : null
+    setShareExpires(expiresAt && expiresAt > new Date() ? expiresAt : null)
     setShareError(null)
-  }, [recording?.id])
+  }, [recording?.id, recording?.share_expires_at])
 
   useEffect(() => {
     if (!recording || !recording.transcript_text) return
