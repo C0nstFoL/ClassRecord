@@ -106,18 +106,22 @@ async def merge_recordings(main_id: int, source_ids: list[int]) -> None:
             logger.warning("合并录音 %s 失败：所有记录都没有转写文本", main_id)
             return
 
-        # 分段小结顺延迁移；提问记录直接换主
+        # 分段小结顺延迁移；提问记录一并迁移。
+        # 注意：必须通过关系属性（recording=main）赋值，让 ORM 把对象从来源
+        # 集合移入主记录集合——直接改 recording_id 外键不会更新集合，随后
+        # db.delete(source) 的 delete-orphan 级联会按旧集合把这些行删掉。
         base_seq = db.query(func.max(SegmentSummary.seq)).filter(
             SegmentSummary.recording_id == main.id
         ).scalar()
         base_seq = (base_seq + 1) if base_seq is not None else 0
         for source in sorted(sources, key=lambda r: r.created_at):
-            for seg in source.segments:
-                seg.recording_id = main.id
+            # 迭代副本：移动元素会修改原集合，直接迭代会漏项
+            for seg in list(source.segments):
+                seg.recording = main
                 seg.seq = base_seq
                 base_seq += 1
-            for qa in source.qa_items:
-                qa.recording_id = main.id
+            for qa in list(source.qa_items):
+                qa.recording = main
 
         # 删除来源记录及其音频/PCM 文件
         for source in sources:
