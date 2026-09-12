@@ -4,14 +4,17 @@ import asyncio
 import logging
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Recording, RecordingStatus
+from app.models import Recording, RecordingStatus, SegmentSummary
 from app.services.llm_service import summarize_transcript
 from app.services.whisper_service import transcribe_audio
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 def _update_status(db: Session, recording: Recording, status: RecordingStatus, **fields) -> None:
@@ -71,5 +74,71 @@ async def retry_summarize(recording_id: int) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.exception("重试总结录音 %s 失败", recording_id)
             _update_status(db, recording, RecordingStatus.FAILED, error_message=str(exc))
+    finally:
+        db.close()
+
+
+async def merge_recordings(main_id: int, source_ids: list[int]) -> None:
+    """把多条中断拆分的记录合并进主记录（文本级合并，不重新转写音频）。
+
+    1. 按创建时间顺序拼接各段转写文本（带段号标记，辅助 LLM 总结）；
+    2. 来源记录的分段小结按 seq 顺延迁移到主记录，提问记录一并迁移；
+    3. 删除来源记录及其音频文件；
+    4. 基于合并后的完整文本重新生成整体总结。
+    """
+    db = SessionLocal()
+    try:
+        main = db.get(Recording, main_id)
+        if main is None:
+            return
+        sources = [db.get(Recording, sid) for sid in source_ids]
+        sources = [s for s in sources if s is not None]
+
+        # 按课堂时间顺序拼接转写文本
+        parts = sorted([main, *sources], key=lambda r: r.created_at)
+        transcripts = [
+            f"【第 {i + 1} 段】\n{r.transcript_text.strip()}"
+            for i, r in enumerate(parts)
+            if r.transcript_text and r.transcript_text.strip()
+        ]
+        merged_transcript = "\n\n".join(transcripts)
+        if not merged_transcript:
+            logger.warning("合并录音 %s 失败：所有记录都没有转写文本", main_id)
+            return
+
+        # 分段小结顺延迁移；提问记录直接换主
+        base_seq = db.query(func.max(SegmentSummary.seq)).filter(
+            SegmentSummary.recording_id == main.id
+        ).scalar()
+        base_seq = (base_seq + 1) if base_seq is not None else 0
+        for source in sorted(sources, key=lambda r: r.created_at):
+            for seg in source.segments:
+                seg.recording_id = main.id
+                seg.seq = base_seq
+                base_seq += 1
+            for qa in source.qa_items:
+                qa.recording_id = main.id
+
+        # 删除来源记录及其音频/PCM 文件
+        for source in sources:
+            for path in (
+                Path(settings.storage_dir) / source.filename,
+                (Path(settings.storage_dir) / source.filename).with_suffix(".raw"),
+            ):
+                path.unlink(missing_ok=True)
+            db.delete(source)
+
+        main.transcript_text = merged_transcript
+        main.summary_text = None
+        db.add(main)
+        db.commit()
+
+        try:
+            _update_status(db, main, RecordingStatus.SUMMARIZING)
+            summary = await summarize_transcript(merged_transcript, title=main.title)
+            _update_status(db, main, RecordingStatus.COMPLETED, summary_text=summary)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("合并录音 %s 重新总结失败", main_id)
+            _update_status(db, main, RecordingStatus.FAILED, error_message=str(exc))
     finally:
         db.close()

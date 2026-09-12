@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api, LANGUAGES } from '../api'
+import { api, LANGUAGES, type Recording } from '../api'
 import { usePresets } from '../hooks/usePresets'
 import type { Preset } from '../api'
 import { startRecordingKeepAlive, stopRecordingKeepAlive, updateRecordingNotification } from '../nativeRecording'
@@ -27,6 +27,7 @@ function formatDuration(totalSeconds: number) {
 /**
  * 实时流式录制：通过 WebSocket 持续推送 MediaRecorder 音频块到后端，
  * 后端增量转写后推回文本，并在达到分段阈值时推回一段小结。
+ * 支持暂停/恢复；暂停状态下刷新页面后可从横幅继续或结束。
  */
 export default function LiveRecorder({ onStarted, onFinished }: Props) {
   // 手机原生离线语音识别模式：客户端用内置中英模型识别后仅推送文字，服务器不做转写
@@ -39,6 +40,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const nativeSttActive = sttMode && (language === 'zh' || language === 'en')
   const nativeSttActiveRef = useRef(false)
   const [isLive, setIsLive] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -46,6 +48,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const [partialText, setPartialText] = useState('')
   const [segments, setSegments] = useState<{ seq: number; text: string }[]>([])
   const [error, setError] = useState('')
+  // 刷新恢复：检测到暂停中的录制时显示横幅
+  const [resumable, setResumable] = useState<Recording | null>(null)
+  const [resuming, setResuming] = useState(false)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -53,8 +58,39 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const timerRef = useRef<number | null>(null)
   const heartbeatRef = useRef<number | null>(null)
   const elapsedRef = useRef(0)
+  const activeIdRef = useRef<number | null>(null)
   const snippetRef = useRef('')
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
+
+  const clearSessionKeys = (id: number) => {
+    window.sessionStorage.removeItem(`live-recording-${id}`)
+    window.sessionStorage.removeItem(`live-paused-${id}`)
+    window.sessionStorage.removeItem(`live-elapsed-${id}`)
+    window.sessionStorage.removeItem(`live-preset-${id}`)
+  }
+
+  // 挂载时检查是否有暂停中的录制（sessionStorage 跨刷新保留）
+  useEffect(() => {
+    const ids = Object.keys(window.sessionStorage)
+      .map((k) => /^live-recording-(\d+)$/.exec(k))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => Number(m[1]))
+    for (const id of ids) {
+      api
+        .getRecording(id)
+        .then((rec) => {
+          if (rec.status === 'recording' && rec.is_paused) {
+            setResumable(rec)
+          } else if (rec.status !== 'recording') {
+            clearSessionKeys(id)
+          }
+        })
+        .catch(() => {
+          /* 记录可能已被删除 */
+        })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -89,68 +125,94 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     void stopRecordingKeepAlive()
   }
 
-  const startLive = async () => {
-    if (!title.trim()) {
+  const startElapsedTimer = (id: number) => {
+    timerRef.current = window.setInterval(() => {
+      setElapsedSeconds((prev) => {
+        const next = prev + 1
+        elapsedRef.current = next
+        window.sessionStorage.setItem(`live-elapsed-${id}`, String(next))
+        // 切后台后通知栏作为"准悬浮窗"展示录制时长
+        void updateRecordingNotification(next, snippetRef.current)
+        return next
+      })
+    }, 1000)
+  }
+
+  const startLive = async (existing?: Recording) => {
+    const resumeMode = Boolean(existing)
+    const resumingPaused = existing
+      ? window.sessionStorage.getItem(`live-paused-${existing.id}`) === '1'
+      : false
+    if (!resumeMode && !title.trim()) {
       setError('请填写课堂标题')
       return
     }
     setError('')
     setConnecting(true)
-    setTranscript('')
-    setSegments([])
+    setResuming(resumeMode)
+    if (!resumeMode) {
+      setTranscript('')
+      setSegments([])
+    }
     try {
-      const recording = await api.createLiveRecording(title.trim(), language)
-      nativeSttActiveRef.current = nativeSttActive
+      const recording = existing ?? (await api.createLiveRecording(title.trim(), language))
+      const recLanguage = existing ? existing.language : language
+      const recPreset = existing
+        ? (window.sessionStorage.getItem(`live-preset-${recording.id}`) ?? 'default')
+        : preset
+      // 内置离线模型仅支持中英双语
+      const nativeMode = sttMode && (recLanguage === 'zh' || recLanguage === 'en')
+      nativeSttActiveRef.current = nativeMode
+      activeIdRef.current = recording.id
+
       // 原生离线识别模式：识别在手机本地完成，先确保麦克风运行时权限已授予
-      if (nativeSttActive) {
+      if (nativeMode) {
         const check = await nativeStt.checkPermission()
         if (!check.granted) {
           const req = await nativeStt.requestPermission()
           if (!req.granted) {
             setConnecting(false)
+            setResuming(false)
             setError('未授予麦克风权限，无法使用语音识别')
             return
           }
         }
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const ws = new WebSocket(api.liveStreamUrl(recording.id, preset))
-      ws.binaryType = 'arraybuffer'
+      const ws = new WebSocket(api.liveStreamUrl(recording.id, recPreset))
 
       ws.onopen = () => {
         window.sessionStorage.setItem(`live-recording-${recording.id}`, '1')
-        elapsedRef.current = 0
-        snippetRef.current = ''
-        // 通知权限 + 前台服务就绪后的公共启动流程（计时器 / 心跳 / 通知）
-        const finishStart = () => {
-          setIsLive(true)
-          setConnecting(false)
-          setElapsedSeconds(0)
-          timerRef.current = window.setInterval(() => {
-            setElapsedSeconds((prev) => {
-              const next = prev + 1
-              elapsedRef.current = next
-              // 切后台后通知栏作为"准悬浮窗"展示录制时长
-              void updateRecordingNotification(next, snippetRef.current)
-              return next
-            })
-          }, 1000)
-          // 心跳保活：每 30 秒发送空字符串 ping，防止切后台时 TCP 被系统回收导致断连
-          heartbeatRef.current = window.setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send('')
-            }
-          }, 30000)
-          onStarted()
+        window.sessionStorage.setItem(`live-preset-${recording.id}`, recPreset)
+        // 恢复时还原累计时长；全新录制从 0 开始
+        if (resumeMode) {
+          elapsedRef.current = Number(window.sessionStorage.getItem(`live-elapsed-${recording.id}`) ?? 0)
+        } else {
+          elapsedRef.current = 0
+          window.sessionStorage.setItem(`live-elapsed-${recording.id}`, '0')
         }
-        const handleKeepAliveFailure = () => {
-          stream.getTracks().forEach((t) => t.stop())
-          ws.close()
-          setConnecting(false)
-          setError('未授予通知权限，已取消录制')
+        snippetRef.current = ''
+        setIsLive(true)
+        setPaused(false)
+        setConnecting(false)
+        setResuming(false)
+        setElapsedSeconds(elapsedRef.current)
+        startElapsedTimer(recording.id)
+        // 心跳保活：每 30 秒发送空字符串 ping，防止切后台时 TCP 被系统回收导致断连
+        heartbeatRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send('')
+          }
+        }, 30000)
+        onStarted()
+
+        // 恢复暂停中的录制：通知服务器从新分片继续
+        if (resumeMode && resumingPaused) {
+          ws.send(JSON.stringify({ type: 'resume' }))
+          window.sessionStorage.removeItem(`live-paused-${recording.id}`)
         }
 
-        if (nativeSttActive) {
+        if (nativeMode) {
           // 原生识别模式：释放 WebView 占用的麦克风，由本地离线模型接管
           stream.getTracks().forEach((t) => t.stop())
           streamRef.current = null
@@ -166,23 +228,14 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
             void updateRecordingNotification(elapsedRef.current, text)
           })
           nativeStt.onError((msg) => setError(msg))
-          startRecordingKeepAlive().then((keepAliveOk) => {
-            if (!keepAliveOk) {
-              void nativeStt.stop()
-              handleKeepAliveFailure()
-              return
-            }
-            nativeStt.start(language === 'en' ? 'en-US' : 'zh-CN').catch((e) => {
-              ws.close()
-              setConnecting(false)
-              setError(e instanceof Error ? e.message : '启动语音识别失败')
-            })
-            finishStart()
+          nativeStt.start(recLanguage === 'en' ? 'en-US' : 'zh-CN').catch((e) => {
+            ws.close()
+            setError(e instanceof Error ? e.message : '启动语音识别失败')
           })
           return
         }
 
-        // 音频推流模式（原逻辑）
+        // 音频推流模式
         const recorder = new MediaRecorder(stream)
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
@@ -197,10 +250,12 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           if (!keepAliveOk) {
             // 通知权限未授予，停止已开始的录音与连接
             recorder.stop()
-            handleKeepAliveFailure()
-            return
+            stream.getTracks().forEach((t) => t.stop())
+            ws.close()
+            setConnecting(false)
+            setResuming(false)
+            setError('未授予通知权限，已取消录制')
           }
-          finishStart()
         })
       }
 
@@ -217,9 +272,12 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         } else if (msg.type === 'error') {
           setError(msg.message)
         } else if (msg.type === 'done') {
+          if (activeIdRef.current !== null) clearSessionKeys(activeIdRef.current)
+          activeIdRef.current = null
           cleanup()
           setStopping(false)
           setIsLive(false)
+          setPaused(false)
           onFinished()
         }
       }
@@ -229,15 +287,21 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       }
 
       ws.onclose = () => {
-        window.sessionStorage.removeItem(`live-recording-${recording.id}`)
+        // 暂停中断开（如刷新）：保留 sessionStorage 标记以便恢复横幅出现
+        if (!paused && activeIdRef.current !== null) {
+          clearSessionKeys(activeIdRef.current)
+        }
+        activeIdRef.current = null
         cleanup()
         setStopping(false)
         setIsLive(false)
+        setPaused(false)
       }
 
       wsRef.current = ws
     } catch (err) {
       setConnecting(false)
+      setResuming(false)
       setError(err instanceof Error ? err.message : '无法开始实时录制，请检查麦克风权限')
       streamRef.current?.getTracks().forEach((t) => t.stop())
     }
@@ -262,9 +326,75 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     }
   }
 
+  const pauseLive = () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN || paused) return
+    if (nativeSttActiveRef.current) {
+      void nativeStt.stop()
+      setPartialText('')
+    } else {
+      mediaRecorderRef.current?.pause()
+    }
+    ws.send(JSON.stringify({ type: 'pause' }))
+    setPaused(true)
+    if (activeIdRef.current !== null) {
+      window.sessionStorage.setItem(`live-paused-${activeIdRef.current}`, '1')
+    }
+  }
+
+  const resumeLive = () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN || !paused) return
+    // 先发控制帧再恢复产音，保证服务器先开好新分片
+    ws.send(JSON.stringify({ type: 'resume' }))
+    setPaused(false)
+    if (activeIdRef.current !== null) {
+      window.sessionStorage.removeItem(`live-paused-${activeIdRef.current}`)
+    }
+    if (nativeSttActiveRef.current) {
+      nativeStt.start(language === 'en' ? 'en-US' : 'zh-CN').catch((e) => {
+        setError(e instanceof Error ? e.message : '恢复语音识别失败')
+      })
+    } else {
+      mediaRecorderRef.current?.resume()
+    }
+  }
+
+  const finishResumable = async () => {
+    if (!resumable) return
+    setStopping(true)
+    try {
+      await api.finishRecording(resumable.id)
+      clearSessionKeys(resumable.id)
+      setResumable(null)
+      onFinished()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '结束录制失败')
+    } finally {
+      setStopping(false)
+    }
+  }
+
   return (
     <div className="card">
       <h2>实时课堂记录</h2>
+
+      {resumable && !isLive && (
+        <div className="resume-banner">
+          <span className="hint">
+            「{resumable.title}」录制已暂停
+          </span>
+          <div className="resume-actions">
+            <button className="btn small primary" onClick={() => void startLive(resumable)} disabled={resuming || connecting}>
+              {resuming ? '连接中...' : '继续录制'}
+            </button>
+            <button className="btn small danger" onClick={finishResumable} disabled={stopping}>
+              {stopping ? '正在结束...' : '结束录制'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <input
         className="input"
         placeholder="课堂标题"
@@ -305,22 +435,36 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
 
       <div className="row">
         {!isLive ? (
-          <button className="btn primary" onClick={startLive} disabled={connecting}>
+          <button className="btn primary" onClick={() => void startLive()} disabled={connecting || resuming}>
             {connecting ? '连接中...' : '开始实时录制'}
           </button>
+        ) : paused ? (
+          <>
+            <button className="btn primary" onClick={resumeLive}>
+              继续录制
+            </button>
+            <button className="btn danger" onClick={stopLive} disabled={stopping}>
+              {stopping ? '停止中...' : '结束录制'}
+            </button>
+          </>
         ) : (
-          <button className="btn danger" onClick={stopLive} disabled={stopping}>
-            {stopping ? '停止中...' : '结束录制'}
-          </button>
+          <>
+            <button className="btn" onClick={pauseLive} disabled={stopping}>
+              ⏸ 暂停
+            </button>
+            <button className="btn danger" onClick={stopLive} disabled={stopping}>
+              {stopping ? '停止中...' : '结束录制'}
+            </button>
+          </>
         )}
       </div>
 
       {isLive && (
         <div className="recording-status">
-          <span className="recording-dot" />
+          <span className={paused ? 'recording-dot paused' : 'recording-dot'} />
           <span className="recording-time">{formatDuration(elapsedSeconds)}</span>
           <span className="recording-size">
-            {stopping ? '正在生成课堂总结...' : '正在实时转写...'}
+            {stopping ? '正在生成课堂总结...' : paused ? '已暂停' : '正在实时转写...'}
           </span>
         </div>
       )}

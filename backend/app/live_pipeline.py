@@ -66,7 +66,13 @@ def _align_head(pending: str, window_text: str) -> int:
 
 
 class LiveSession:
-    """维护单次实时录制会话的状态（原始音频、PCM 累积、滑动窗口转写、分段小结计时）。"""
+    """维护单次实时录制会话的状态（原始音频、PCM 累积、滑动窗口转写、分段小结计时）。
+
+    音频支持分片写入：暂停时关闭当前分片，恢复时开新分片继续追加。
+    各分片依次解码进同一份会话级 raw PCM，滑动窗口逻辑不受分片影响。
+    恢复（重连）场景通过 initial_text / segment_seq_start 播种历史状态，
+    新会话的 raw 只包含恢复后的音频，不会重复转写旧内容。
+    """
 
     def __init__(
         self,
@@ -74,15 +80,18 @@ class LiveSession:
         audio_path: Path,
         preset: str = "default",
         language: str = "zh",
+        initial_text: str = "",
+        segment_seq_start: int = 0,
+        session_tag: str = "",
     ):
         self.recording_id = recording_id
         self.audio_path = audio_path
         self.preset = preset
         self.language = language
         # 稳定文本：窗口转写中已与上轮结果一致而被归档的前缀
-        self.stable_text = ""
+        self.stable_text = initial_text
         # 全量转写文本 = stable_text + 当前窗口未稳定尾部
-        self.transcript_text = ""
+        self.transcript_text = initial_text
         # 上一轮窗口转写结果（用于前缀比较）
         self._window_text = ""
         # 锚定窗口起点（raw 文件字节偏移）：窗口攒满归档后才前移
@@ -91,58 +100,95 @@ class LiveSession:
         self._win_full = ""
         # 累积解码出的 PCM 时长（秒）
         self.pcm_seconds = 0.0
-        # 源音频中已解码到的位置（秒，用于增量解码跳过旧数据）
-        self._decoded_time = -1.0
-        self.last_segment_text_len = 0
+        # 音频分片：暂停/恢复会产生多个分片文件，依次追加。
+        # base = 原音频名（首次会话）或带 session_tag 的独立名（重连恢复会话），
+        # 保证重连后绝不截断之前的分片文件。
+        self._base_path = (
+            audio_path.with_name(f"{audio_path.stem}{session_tag}{audio_path.suffix}")
+            if session_tag
+            else audio_path
+        )
+        self._part_paths: list[Path] = [self._base_path]
+        self._part_index = 0
+        # 每个分片的解码进度：已完整解码的分片记录在集合里，末尾分片按时间增量解码
+        self._fully_decoded_parts: set[int] = set()
+        self._part_decoded_time: dict[int, float] = {}
+        self.last_segment_text_len = len(initial_text)
         self.last_segment_time = time.monotonic()
-        self.segment_seq = 0
-        self._file = audio_path.open("wb")
-        self._raw_path = audio_path.with_suffix(".raw")
+        self.segment_seq = segment_seq_start
+        self._file = self._base_path.open("wb")
+        # 会话级 raw 文件带 session_tag，重连恢复的新会话不会读到旧会话的 PCM
+        self._raw_path = self._base_path.with_name(f"{self._base_path.stem}.raw{session_tag}")
         self._raw = self._raw_path.open("wb")
 
     def write_chunk(self, data: bytes) -> None:
         self._file.write(data)
         self._file.flush()
 
+    def pause(self) -> None:
+        """暂停：关闭并落盘当前音频分片，恢复时将开启新分片继续写入。"""
+        if self._file and not self._file.closed:
+            self._file.flush()
+            self._file.close()
+
+    def resume(self) -> None:
+        """恢复：开启新音频分片继续写入（暂停边界即完整的转写断点）。"""
+        if self._file and not self._file.closed:
+            return
+        self._part_index += 1
+        part = self._base_path.with_name(
+            f"{self._base_path.stem}-{self._part_index}{self._base_path.suffix}"
+        )
+        self._part_paths.append(part)
+        self._file = part.open("wb")
+
     def close_file(self) -> None:
-        for f in (self._file, self._raw):
-            if not f.closed:
-                f.close()
+        if self._file and not self._file.closed:
+            self._file.close()
+        if not self._raw.closed:
+            self._raw.close()
 
     def _ingest_new_audio(self) -> None:
-        """把源音频中尚未解码的新增部分增量解码为 16kHz s16 PCM 追加到 raw 文件。
+        """把各音频分片中尚未解码的部分增量解码为 16kHz s16 PCM 追加到 raw 文件。
 
-        每轮重新打开容器并 seek 到上次解码位置附近（回退 2 秒防边界丢帧），
-        只解码新数据——保证长课堂下该步骤耗时也恒定。
+        已完成的分片整体解码一次后跳过；末尾分片按 pts 增量解码（回退 2 秒
+        防边界丢帧）——保证长课堂下该步骤耗时恒定。
         """
         import av
         import numpy as np
 
-        if self.audio_path.stat().st_size == 0:
-            return
-        container = av.open(str(self.audio_path))
-        try:
-            audio_stream = container.streams.audio[0]
-            resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-            if self._decoded_time > 0:
-                # 回退 2 秒重解一小段，靠 pts 去重，避免 seek 边界丢帧
-                back = max(0.0, self._decoded_time - 2.0)
-                tb = audio_stream.time_base
-                container.seek(int(back / tb), stream=audio_stream, backward=True, any_frame=True)
-            for frame in container.decode(audio=0):
-                t = frame.time
-                if t is not None:
-                    if t <= self._decoded_time:
-                        continue
-                    self._decoded_time = t
-                for resampled in resampler.resample(frame):
-                    arr = resampled.to_ndarray()
-                    pcm = arr.astype(np.int16).tobytes()
-                    self._raw.write(pcm)
-                    self.pcm_seconds += len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-            self._raw.flush()
-        finally:
-            container.close()
+        for i, part in enumerate(self._part_paths):
+            if i in self._fully_decoded_parts or part.stat().st_size == 0:
+                continue
+            is_last = i == len(self._part_paths) - 1
+            container = av.open(str(part))
+            try:
+                audio_stream = container.streams.audio[0]
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+                decoded_time = self._part_decoded_time.get(i, -1.0)
+                if decoded_time > 0:
+                    # 回退 2 秒重解一小段，靠 pts 去重，避免 seek 边界丢帧
+                    back = max(0.0, decoded_time - 2.0)
+                    tb = audio_stream.time_base
+                    container.seek(int(back / tb), stream=audio_stream, backward=True, any_frame=True)
+                for frame in container.decode(audio=0):
+                    t = frame.time
+                    if t is not None:
+                        if t <= decoded_time:
+                            continue
+                        decoded_time = t
+                    for resampled in resampler.resample(frame):
+                        arr = resampled.to_ndarray()
+                        pcm = arr.astype(np.int16).tobytes()
+                        self._raw.write(pcm)
+                        self.pcm_seconds += len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+                if is_last:
+                    self._part_decoded_time[i] = decoded_time
+                else:
+                    self._fully_decoded_parts.add(i)
+            finally:
+                container.close()
+                self._raw.flush()
 
     def _transcribe_window(self) -> str | None:
         """转写锚定窗口（raw 文件从 _anchor_bytes 起到末尾）的音频，返回文本。
@@ -154,7 +200,7 @@ class LiveSession:
         window_pcm = raw_size - self._anchor_bytes
         if window_pcm < SAMPLE_RATE * BYTES_PER_SAMPLE:  # 不足 1 秒不转写
             return None
-        tmp_wav = self._raw_path.with_suffix(".window.wav")
+        tmp_wav = self._raw_path.with_name(self._raw_path.name + ".window.wav")
         with self._raw_path.open("rb") as src:
             src.seek(self._anchor_bytes)
             pcm = src.read()
@@ -279,14 +325,14 @@ async def finalize_live_recording(recording_id: int) -> None:
         if recording is None:
             return
         if not recording.transcript_text:
-            _update_status(db, recording, RecordingStatus.FAILED, error_message="未识别到有效语音内容")
+            _update_status(db, recording, RecordingStatus.FAILED, error_message="未识别到有效语音内容", is_paused=False)
             return
         try:
-            _update_status(db, recording, RecordingStatus.SUMMARIZING)
+            _update_status(db, recording, RecordingStatus.SUMMARIZING, is_paused=False)
             summary = await summarize_transcript(recording.transcript_text, title=recording.title)
             _update_status(db, recording, RecordingStatus.COMPLETED, summary_text=summary)
         except Exception as exc:  # noqa: BLE001
             logger.exception("实时录制 %s 结束总结失败", recording_id)
-            _update_status(db, recording, RecordingStatus.FAILED, error_message=str(exc))
+            _update_status(db, recording, RecordingStatus.FAILED, error_message=str(exc), is_paused=False)
     finally:
         db.close()

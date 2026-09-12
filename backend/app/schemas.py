@@ -23,6 +23,7 @@ class RecordingOut(BaseModel):
     summary_text: str | None
     error_message: str | None
     is_live: bool
+    is_paused: bool
     language: str
     share_expires_at: datetime.datetime | None
     created_at: datetime.datetime
@@ -36,6 +37,11 @@ class RecordingUpdateIn(BaseModel):
 class ShareLinkIn(BaseModel):
     # 分享有效期（小时）：24 / 72 / 168
     hours: int
+
+
+class MergeRecordingsIn(BaseModel):
+    # 要并入主记录的来源记录 id 列表（主记录由 URL 指定）
+    source_ids: list[int]
 
 
 class ShareLinkOut(BaseModel):

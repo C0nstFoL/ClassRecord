@@ -47,12 +47,16 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE recordings ADD COLUMN share_token VARCHAR(64)"))
         if "share_expires_at" not in columns:
             conn.execute(text("ALTER TABLE recordings ADD COLUMN share_expires_at DATETIME"))
+        if "is_paused" not in columns:
+            conn.execute(text("ALTER TABLE recordings ADD COLUMN is_paused BOOLEAN DEFAULT 0"))
 
 
 def _fail_stale_recordings() -> None:
     """把僵死的实时录制行标记为失败：App 被直接杀掉时 WebSocket 收尾不会执行，
     status 会永远停在 recording，导致所有设备都显示「正在由其他设备录制」。
     正常录制中的记录每 3 秒都会持久化转写并刷新 updated_at，不会命中 10 分钟阈值。
+    暂停中的记录（is_paused=1）没有新转写落库属正常现象，跳过清理，等待用户
+    恢复或手动结束。
     """
     from sqlalchemy import text
 
@@ -60,7 +64,8 @@ def _fail_stale_recordings() -> None:
         result = conn.execute(
             text(
                 "UPDATE recordings SET status = 'FAILED', error_message = '录制会话异常中断' "
-                "WHERE status = 'RECORDING' AND updated_at < datetime('now', '-600 seconds')"
+                "WHERE status = 'RECORDING' AND (is_paused IS NULL OR is_paused = 0) "
+                "AND updated_at < datetime('now', '-600 seconds')"
             )
         )
         if result.rowcount:

@@ -59,6 +59,26 @@ function Dashboard({ userName }: { userName: string | null }) {
     refresh()
   }
 
+  // 合并多段中断拆分的记录：保留最早的一条作为主记录
+  const handleMerge = async (ids: number[]) => {
+    const items = ids
+      .map((id) => recordings.find((r) => r.id === id))
+      .filter((r): r is Recording => Boolean(r))
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    if (items.length < 2) return
+    const [main, ...sources] = items
+    const ok = window.confirm(
+      `将把 ${items.length} 条记录按时间顺序合并为「${main.title}」，\n` +
+        `其余 ${sources.length} 条记录将被删除，整体总结会重新生成。\n确定合并？`,
+    )
+    if (!ok) return
+    await api.mergeRecordings(main.id, sources.map((r) => r.id))
+    if (selectedId !== null && sources.some((r) => r.id === selectedId)) {
+      setSelectedId(main.id)
+    }
+    refresh()
+  }
+
   const handleSelect = (id: number) => {
     const next = selectedId === id ? null : id
     setSelectedId(next)
@@ -121,6 +141,7 @@ function Dashboard({ userName }: { userName: string | null }) {
             selectedId={selectedId}
             onSelect={handleSelect}
             onDelete={handleDelete}
+            onMerge={handleMerge}
           />
         </div>
         <div className="right-col">

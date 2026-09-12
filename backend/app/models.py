@@ -43,6 +43,7 @@ class Recording(Base):
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_live: Mapped[bool] = mapped_column(default=False)  # 是否为实时流式录制产生的记录
+    is_paused: Mapped[bool] = mapped_column(default=False)  # 实时录制是否处于暂停（暂停中不参与僵死清理）
     language: Mapped[str] = mapped_column(String(8), default="zh")  # 识别语言：zh/en/ja/ko/yue
     # 分享链接：token 为空表示未开启分享；expires_at 过期后公开访问失效
     share_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)

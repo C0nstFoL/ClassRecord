@@ -21,6 +21,7 @@ export interface Recording {
   summary_text: string | null
   error_message: string | null
   is_live: boolean
+  is_paused: boolean
   language: string
   share_expires_at: string | null
   created_at: string
@@ -135,6 +136,16 @@ export const api = {
     return request<Recording>('/api/recordings', { method: 'POST', body: form })
   },
   listSegments: (id: number) => request<SegmentSummary[]>(`/api/recordings/${id}/segments`),
+  // 结束一条暂停中的实时录制并生成总结
+  finishRecording: (id: number) =>
+    request<Recording>(`/api/recordings/${id}/finish`, { method: 'POST' }),
+  // 把 source_ids 合并进 mainId（按时间拼接转写后重新总结，来源记录被删除）
+  mergeRecordings: (mainId: number, sourceIds: number[]) =>
+    request<Recording>(`/api/recordings/${mainId}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_ids: sourceIds }),
+    }),
   createLiveRecording: (title: string, language: string) => {
     const form = new FormData()
     form.append('title', title)

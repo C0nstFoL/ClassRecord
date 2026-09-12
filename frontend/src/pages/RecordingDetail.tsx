@@ -346,9 +346,11 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
         <div className="recording-status">
           <span className="recording-dot" />
           <span className="hint">
-            {window.sessionStorage.getItem(`live-recording-${recording.id}`)
-              ? '正在实时录制与转写...'
-              : '正在由其他设备实时录制与转写...'}
+            {window.sessionStorage.getItem(`live-paused-${recording.id}`)
+              ? '录制已暂停'
+              : window.sessionStorage.getItem(`live-recording-${recording.id}`)
+                ? '正在实时录制与转写...'
+                : '正在由其他设备实时录制与转写...'}
           </span>
         </div>
       )}

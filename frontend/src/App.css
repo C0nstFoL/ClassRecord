@@ -1051,3 +1051,62 @@
     animation: none;
   }
 }
+
+/* ===== 列表多选合并 ===== */
+.list-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.list-toolbar .list-search {
+  flex: 1;
+}
+
+.merge-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.list-item.checked {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.list-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ===== 录制暂停 ===== */
+.resume-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--social-bg);
+  animation: fade-slide-in 0.2s ease;
+}
+
+.resume-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.recording-dot.paused {
+  background: var(--border);
+  animation: none;
+}

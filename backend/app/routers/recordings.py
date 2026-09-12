@@ -17,16 +17,18 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, get_current_user_ws
 from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.live_pipeline import LiveSession, finalize_live_recording, generate_segment_summary
-from app.models import QaRecord, Recording, RecordingStatus, User
-from app.pipeline import process_recording, retry_summarize
+from app.models import QaRecord, Recording, RecordingStatus, SegmentSummary, User
+from app.pipeline import merge_recordings, process_recording, retry_summarize
 from app.schemas import (
     AskQuestionIn,
+    MergeRecordingsIn,
     QaRecordOut,
     RecordingOut,
     RecordingUpdateIn,
@@ -90,6 +92,58 @@ async def update_recording(
     db.add(recording)
     db.commit()
     db.refresh(recording)
+    return recording
+
+
+@router.post("/{recording_id}/merge", response_model=RecordingOut)
+async def merge_into_recording(
+    recording_id: int,
+    payload: MergeRecordingsIn,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """把多段中断拆分的记录合并进主记录：拼接转写、迁移小结/提问后重新总结。"""
+    main = db.get(Recording, recording_id)
+    if main is None or main.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if main.status == RecordingStatus.RECORDING:
+        raise HTTPException(status_code=400, detail="主记录正在录制中，无法合并")
+    if not payload.source_ids or recording_id in payload.source_ids:
+        raise HTTPException(status_code=400, detail="来源记录列表无效")
+    sources = db.query(Recording).filter(Recording.id.in_(payload.source_ids)).all()
+    if len(sources) != len(set(payload.source_ids)):
+        raise HTTPException(status_code=404, detail="部分来源记录不存在")
+    for source in sources:
+        if source.user_id != user.id:
+            raise HTTPException(status_code=403, detail="存在不属于当前用户的记录")
+        if source.status == RecordingStatus.RECORDING:
+            raise HTTPException(status_code=400, detail=f"「{source.title}」正在录制中，无法合并")
+        if not source.transcript_text or not source.transcript_text.strip():
+            raise HTTPException(status_code=400, detail=f"「{source.title}」没有转写文本，无法合并")
+    background_tasks.add_task(merge_recordings, recording_id, payload.source_ids)
+    db.refresh(main)
+    return main
+
+
+@router.post("/{recording_id}/finish", response_model=RecordingOut)
+async def finish_recording(
+    recording_id: int,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """结束一条（通常处于暂停中、连接已丢失的）实时录制并生成总结。"""
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if recording.status != RecordingStatus.RECORDING:
+        raise HTTPException(status_code=400, detail="该记录不在录制中")
+    recording.is_paused = False
+    db.add(recording)
+    db.commit()
+    db.refresh(recording)
+    background_tasks.add_task(finalize_live_recording, recording.id)
     return recording
 
 
@@ -256,6 +310,10 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         if recording is None or recording.user_id != user.id:
             await websocket.close(code=4404, reason="记录不存在")
             return
+        # 重连恢复（页面刷新后续录）：预先取分段小结的最大 seq，供新会话顺延编号
+        nonlocal_max_seq = (
+            db.query(func.max(SegmentSummary.seq)).filter(SegmentSummary.recording_id == recording.id).scalar()
+        )
     finally:
         db.close()
 
@@ -263,8 +321,21 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
     # 语言与热词预设由前端在录制开始前选定，通过 WS 查询参数传入
     preset = websocket.query_params.get("preset", "default")
     language = recording.language or "zh"
-    session = LiveSession(recording_id, audio_path, preset=preset, language=language)
+    # 重连恢复（页面刷新后续录）：播种历史转写与分段序号，新会话只转写恢复后的音频
+    resumed = bool(recording.transcript_text)
+    session = LiveSession(
+        recording_id,
+        audio_path,
+        preset=preset,
+        language=language,
+        initial_text=recording.transcript_text or "",
+        segment_seq_start=(nonlocal_max_seq + 1) if nonlocal_max_seq is not None else 0,
+        # 每次重连使用独立 raw 文件，避免读到旧会话的 PCM
+        session_tag=f"-r{recording_id}-{uuid.uuid4().hex[:8]}" if resumed else "",
+    )
     transcribe_task: asyncio.Task | None = None
+    explicit_stop = False
+    paused = False
 
     async def run_transcribe_loop():
         while True:
@@ -298,17 +369,32 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
             if message["type"] == "websocket.disconnect":
                 break
             if "bytes" in message and message["bytes"] is not None:
-                session.write_chunk(message["bytes"])
+                # 暂停期间不应有音频块到达，防御性忽略
+                if not paused:
+                    session.write_chunk(message["bytes"])
             elif "text" in message and message["text"] == "stop":
+                explicit_stop = True
                 break
             elif "text" in message and message["text"]:
-                # 原生 STT 模式：客户端识别出文本后以 JSON 文本帧推送 {"type":"stt_text","text":"..."}
-                # 服务器只做持久化 + 分段小结 + 整课总结，不做 Whisper 转写、不写音频
                 try:
                     data = json.loads(message["text"])
                 except (ValueError, TypeError):
                     continue
-                if not isinstance(data, dict) or data.get("type") != "stt_text":
+                if not isinstance(data, dict):
+                    continue
+                if data.get("type") == "pause":
+                    paused = True
+                    session.pause()
+                    _set_paused(recording_id, True)
+                    continue
+                if data.get("type") == "resume":
+                    paused = False
+                    session.resume()
+                    _set_paused(recording_id, False)
+                    continue
+                # 原生 STT 模式：客户端识别出文本后以 JSON 文本帧推送 {"type":"stt_text","text":"..."}
+                # 服务器只做持久化 + 分段小结 + 整课总结，不做 Whisper 转写、不写音频
+                if data.get("type") != "stt_text":
                     continue
                 text = (data.get("text") or "").strip()
                 if not text:
@@ -341,11 +427,26 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
             await websocket.send_json({"type": "done"})
         except Exception:
             pass
-        await finalize_live_recording(recording_id)
+        # 暂停状态下断开（如页面刷新）：保留 RECORDING 状态等待用户恢复或结束，
+        # 不做收尾总结；显式 stop 才正常收尾。
+        if explicit_stop or not paused:
+            await finalize_live_recording(recording_id)
         try:
             await websocket.close()
         except Exception:
             pass
+
+
+def _set_paused(recording_id: int, value: bool) -> None:
+    db = SessionLocal()
+    try:
+        recording = db.get(Recording, recording_id)
+        if recording is not None:
+            recording.is_paused = value
+            db.add(recording)
+            db.commit()
+    finally:
+        db.close()
 
 
 def _persist_transcript(recording_id: int, transcript_text: str) -> None:
