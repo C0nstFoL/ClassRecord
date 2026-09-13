@@ -24,6 +24,7 @@ class RecordingOut(BaseModel):
     error_message: str | None
     is_live: bool
     is_paused: bool
+    auto_summary: bool
     language: str
     share_expires_at: datetime.datetime | None
     created_at: datetime.datetime

@@ -49,6 +49,8 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE recordings ADD COLUMN share_expires_at DATETIME"))
         if "is_paused" not in columns:
             conn.execute(text("ALTER TABLE recordings ADD COLUMN is_paused BOOLEAN DEFAULT 0"))
+        if "auto_summary" not in columns:
+            conn.execute(text("ALTER TABLE recordings ADD COLUMN auto_summary BOOLEAN DEFAULT 1"))
 
 
 def _fail_stale_recordings() -> None:

@@ -45,6 +45,10 @@ async def process_recording(
             )
             _update_status(db, recording, RecordingStatus.TRANSCRIBED, transcript_text=transcript)
 
+            # 关闭了自动总结：停在「已转写」，可在详情页手动生成
+            if not recording.auto_summary:
+                return
+
             _update_status(db, recording, RecordingStatus.SUMMARIZING)
             summary = await summarize_transcript(transcript, title=recording.title)
             _update_status(db, recording, RecordingStatus.COMPLETED, summary_text=summary)

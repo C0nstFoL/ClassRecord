@@ -192,6 +192,7 @@ async def upload_recording(
     title: str = Form(...),
     preset: str = Form("default"),
     language: str = Form("zh"),
+    auto_summary: bool = Form(True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -212,6 +213,7 @@ async def upload_recording(
         filename=stored_name,
         status=RecordingStatus.UPLOADED,
         language=language,
+        auto_summary=auto_summary,
     )
     db.add(recording)
     db.commit()
@@ -241,6 +243,26 @@ async def retry_recording(
     return recording
 
 
+@router.post("/{recording_id}/summarize", response_model=RecordingOut)
+async def summarize_recording(
+    recording_id: int,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """为已有转写的记录手动生成（或重新生成）总结。"""
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    if recording.status == RecordingStatus.RECORDING:
+        raise HTTPException(status_code=400, detail="录制尚未结束，无法生成总结")
+    if not recording.transcript_text:
+        raise HTTPException(status_code=400, detail="该记录还没有转写文本，无法生成总结")
+
+    background_tasks.add_task(retry_summarize, recording.id)
+    return recording
+
+
 @router.get("/{recording_id}/qa", response_model=list[QaRecordOut])
 async def list_qa(
     recording_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -265,6 +287,7 @@ async def list_segments(
 async def create_live_recording(
     title: str = Form(...),
     language: str = Form("zh"),
+    auto_summary: bool = Form(True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -277,6 +300,7 @@ async def create_live_recording(
         status=RecordingStatus.RECORDING,
         is_live=True,
         language=language,
+        auto_summary=auto_summary,
     )
     db.add(recording)
     db.commit()

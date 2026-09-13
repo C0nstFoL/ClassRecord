@@ -327,6 +327,10 @@ async def finalize_live_recording(recording_id: int) -> None:
         if not recording.transcript_text:
             _update_status(db, recording, RecordingStatus.FAILED, error_message="未识别到有效语音内容", is_paused=False)
             return
+        # 关闭了自动总结：停在「已转写」，可在详情页手动生成
+        if not recording.auto_summary:
+            _update_status(db, recording, RecordingStatus.TRANSCRIBED, is_paused=False)
+            return
         try:
             _update_status(db, recording, RecordingStatus.SUMMARIZING, is_paused=False)
             summary = await summarize_transcript(recording.transcript_text, title=recording.title)

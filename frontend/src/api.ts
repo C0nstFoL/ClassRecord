@@ -22,6 +22,7 @@ export interface Recording {
   error_message: string | null
   is_live: boolean
   is_paused: boolean
+  auto_summary: boolean
   language: string
   share_expires_at: string | null
   created_at: string
@@ -127,12 +128,16 @@ export const api = {
     }),
   listQa: (id: number) => request<QaRecord[]>(`/api/recordings/${id}/qa`),
   listPresets: () => request<Preset[]>('/api/recordings/presets'),
-  uploadRecording: (file: Blob, title: string, filename: string, preset: string, language: string) => {
+  // 为已有转写的记录手动生成（或重新生成）总结
+  summarizeRecording: (id: number) =>
+    request<Recording>(`/api/recordings/${id}/summarize`, { method: 'POST' }),
+  uploadRecording: (file: Blob, title: string, filename: string, preset: string, language: string, autoSummary: boolean) => {
     const form = new FormData()
     form.append('file', file, filename)
     form.append('title', title)
     form.append('preset', preset)
     form.append('language', language)
+    form.append('auto_summary', String(autoSummary))
     return request<Recording>('/api/recordings', { method: 'POST', body: form })
   },
   listSegments: (id: number) => request<SegmentSummary[]>(`/api/recordings/${id}/segments`),
@@ -146,10 +151,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source_ids: sourceIds }),
     }),
-  createLiveRecording: (title: string, language: string) => {
+  createLiveRecording: (title: string, language: string, autoSummary: boolean) => {
     const form = new FormData()
     form.append('title', title)
     form.append('language', language)
+    form.append('auto_summary', String(autoSummary))
     return request<Recording>('/api/recordings/live', { method: 'POST', body: form })
   },
   liveStreamUrl: (id: number, preset: string) => {

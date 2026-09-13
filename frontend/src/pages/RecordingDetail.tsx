@@ -34,6 +34,8 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   const [shareExpires, setShareExpires] = useState<Date | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
   const [shareError, setShareError] = useState<string | null>(null)
+  // 手动生成总结
+  const [summarizing, setSummarizing] = useState(false)
 
   useEffect(() => {
     if (recording?.summary_text) {
@@ -218,6 +220,19 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     }
   }
 
+  const handleSummarize = async () => {
+    if (summarizing) return
+    setSummarizing(true)
+    try {
+      await api.summarizeRecording(recording.id)
+      onChanged?.()
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : '生成总结失败')
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
   return (
     // key 随录音 id 变化，切换记录时整卡重挂载以重放入场动画
     <div className="card detail-card" key={recording.id}>
@@ -358,6 +373,17 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
         <p className="hint">正在转写语音，请稍候...</p>
       )}
       {recording.status === 'summarizing' && <p className="hint">转写完成，正在生成总结...</p>}
+
+      {(recording.status === 'transcribed' || recording.status === 'completed') &&
+        hasTranscript &&
+        !hasSummary && (
+          <div className="summarize-row">
+            <span className="hint">该记录还没有课堂总结</span>
+            <button className="btn small primary" onClick={handleSummarize} disabled={summarizing}>
+              {summarizing ? '生成中...' : '✨ 生成课堂总结'}
+            </button>
+          </div>
+        )}
 
       {(hasSummary || hasTranscript || hasSegments) && (
         <div className="detail-tabs">

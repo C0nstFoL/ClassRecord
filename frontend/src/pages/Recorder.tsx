@@ -20,6 +20,7 @@ export default function Recorder({ onUploaded }: Props) {
   const [preset, setPreset] = useState('default')
   const [language, setLanguage] = useState('zh')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [autoSummary, setAutoSummary] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
@@ -39,7 +40,7 @@ export default function Recorder({ onUploaded }: Props) {
     setError('')
     setUploading(true)
     try {
-      await api.uploadRecording(selectedFile, title.trim(), selectedFile.name, preset, language)
+      await api.uploadRecording(selectedFile, title.trim(), selectedFile.name, preset, language, autoSummary)
       setTitle('')
       setSelectedFile(null)
       onUploaded()
@@ -90,6 +91,15 @@ export default function Recorder({ onUploaded }: Props) {
       <div className="row">
         <input type="file" accept="audio/*,video/*" onChange={handleFileChange} />
       </div>
+
+      <label className="check-row">
+        <input
+          type="checkbox"
+          checked={autoSummary}
+          onChange={(e) => setAutoSummary(e.target.checked)}
+        />
+        转写完成后自动生成课堂总结
+      </label>
 
       {selectedFile && (
         <div className="ready-info">

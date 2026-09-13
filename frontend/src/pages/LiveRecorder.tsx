@@ -36,6 +36,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const presets: Preset[] = usePresets()
   const [preset, setPreset] = useState('default')
   const [language, setLanguage] = useState('zh')
+  const [autoSummary, setAutoSummary] = useState(true)
   // 内置离线模型仅支持中英双语：其他语言回落到音频推流 + 服务器端识别
   const nativeSttActive = sttMode && (language === 'zh' || language === 'en')
   const nativeSttActiveRef = useRef(false)
@@ -155,7 +156,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       setSegments([])
     }
     try {
-      const recording = existing ?? (await api.createLiveRecording(title.trim(), language))
+      const recording = existing ?? (await api.createLiveRecording(title.trim(), language, autoSummary))
       const recLanguage = existing ? existing.language : language
       const recPreset = existing
         ? (window.sessionStorage.getItem(`live-preset-${recording.id}`) ?? 'default')
@@ -432,6 +433,16 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           </option>
         ))}
       </select>
+
+      <label className="check-row">
+        <input
+          type="checkbox"
+          checked={autoSummary}
+          onChange={(e) => setAutoSummary(e.target.checked)}
+          disabled={isLive || connecting}
+        />
+        录制结束后自动生成课堂总结
+      </label>
 
       <div className="row">
         {!isLive ? (
