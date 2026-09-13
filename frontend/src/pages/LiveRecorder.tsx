@@ -327,14 +327,25 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     }
   }
 
-  const pauseLive = () => {
+  const pauseLive = async () => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN || paused) return
     if (nativeSttActiveRef.current) {
       void nativeStt.stop()
       setPartialText('')
     } else {
-      mediaRecorderRef.current?.pause()
+      // 彻底停止 MediaRecorder（而非 pause()）：恢复时需新建 MediaRecorder——
+      // resume() 续写的裸 cluster 缺 webm 文件头，新分片无法解码。
+      // 先等 stop 事件把最后一片音频冲刷出去，再通知服务器暂停，保证
+      // 当前 webm 分片完整且不丢暂停边界的音频。
+      const rec = mediaRecorderRef.current
+      mediaRecorderRef.current = null
+      if (rec && rec.state !== 'inactive') {
+        await new Promise<void>((resolve) => {
+          rec.addEventListener('stop', () => resolve(), { once: true })
+          rec.stop()
+        })
+      }
     }
     ws.send(JSON.stringify({ type: 'pause' }))
     setPaused(true)
@@ -346,7 +357,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const resumeLive = () => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN || !paused) return
-    // 先发控制帧再恢复产音，保证服务器先开好新分片
+    // 先发控制帧让服务器开好新分片，再恢复产音
     ws.send(JSON.stringify({ type: 'resume' }))
     setPaused(false)
     if (activeIdRef.current !== null) {
@@ -357,7 +368,18 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         setError(e instanceof Error ? e.message : '恢复语音识别失败')
       })
     } else {
-      mediaRecorderRef.current?.resume()
+      // 新建 MediaRecorder：新分片自带 webm 文件头，可独立解码
+      const stream = streamRef.current
+      if (stream) {
+        const recorder = new MediaRecorder(stream)
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data)
+          }
+        }
+        recorder.start(2000)
+        mediaRecorderRef.current = recorder
+      }
     }
   }
 
@@ -460,7 +482,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           </>
         ) : (
           <>
-            <button className="btn" onClick={pauseLive} disabled={stopping}>
+            <button className="btn" onClick={() => void pauseLive()} disabled={stopping}>
               ⏸ 暂停
             </button>
             <button className="btn danger" onClick={stopLive} disabled={stopping}>
