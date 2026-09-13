@@ -6,7 +6,17 @@ httpx==0.27.2
 python-multipart==0.0.9
 itsdangerous==2.2.0
 faster-whisper==1.0.3
-sherpa-onnx==1.12.40
 requests==2.32.3
 nvidia-cudnn-cu12==9.1.0.70
 nvidia-cublas-cu12==12.1.3.1
+# onnxruntime CUDA EP 依赖的其余 CUDA 运行库（cudart/cufft/curand/cusolver/cusparse/nvrtc）
+nvidia-cuda-runtime-cu12==12.1.105
+nvidia-cuda-nvrtc-cu12==12.1.105
+nvidia-cufft-cu12==11.0.2.54
+nvidia-curand-cu12==10.3.2.106
+nvidia-cusolver-cu12==11.4.5.107
+nvidia-cusparse-cu12==12.1.0.106
+# sherpa-onnx CUDA 版轮子（PyPI 上的默认轮子是纯 CPU 版）：
+# 同一包内 provider="cuda" 走 GPU、默认走 CPU——上传转写用 GPU，实时录制用 CPU
+--find-links https://k2-fsa.github.io/sherpa/onnx/cuda-cn.html
+sherpa-onnx==1.13.7+cuda12.cudnn9.onnxruntime1.27.1

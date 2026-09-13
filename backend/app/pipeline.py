@@ -39,8 +39,9 @@ async def process_recording(
 
         try:
             _update_status(db, recording, RecordingStatus.TRANSCRIBING)
+            # 上传的是完整文件，用 GPU 转写加速（实时录制的窗口转写保持 CPU）
             transcript = await asyncio.to_thread(
-                transcribe_audio, file_path, preset, language
+                transcribe_audio, file_path, preset, language, "cuda"
             )
             _update_status(db, recording, RecordingStatus.TRANSCRIBED, transcript_text=transcript)
 

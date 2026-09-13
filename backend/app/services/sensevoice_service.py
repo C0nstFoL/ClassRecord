@@ -1,6 +1,8 @@
 """基于 sherpa-onnx 的 SenseVoice 离线识别服务（中文/粤语专用，速度与准确率优于 Whisper）。
 
-首次使用时自动从 HF 镜像下载 int8 量化模型（约 235MB）到本地缓存目录。
+首次使用时自动从 GitHub release 下载 int8 量化模型（约 235MB）到本地缓存目录。
+使用 sherpa-onnx CUDA 版轮子，支持双设备实例：上传转写走 GPU（provider=cuda），
+实时录制的窗口转写走 CPU（provider=cpu）。
 """
 
 import logging
@@ -22,7 +24,8 @@ _MODEL_TARBALL = (
 # SenseVoice 输出中会带 <|zh|><|NEUTRAL|><|Speech|> 等特殊标记，统一剥掉
 _TAG_RE = re.compile(r"<\|[^|]*\|>")
 
-_recognizer = None
+# 各设备的识别器实例（懒加载，进程内各只加载一次）
+_recognizers: dict[str, object] = {}
 _recognizer_lock = threading.Lock()
 
 
@@ -44,37 +47,64 @@ def _download_model(model_dir: Path) -> None:
     logger.info("SenseVoice 模型下载完成: %s", model_dir)
 
 
-def get_recognizer():
-    """惰性加载 SenseVoice 离线识别器，进程内只加载一次。"""
-    global _recognizer
-    if _recognizer is None:
+def _ensure_model_files(model_dir: Path) -> tuple[str, str]:
+    model_file = model_dir / "model.int8.onnx"
+    tokens_file = model_dir / "tokens.txt"
+    if not (model_file.exists() and tokens_file.exists()):
+        _download_model(model_dir)
+    return str(model_file), str(tokens_file)
+
+
+def _load_recognizer(provider: str):
+    import sherpa_onnx  # 延迟导入，避免未安装时影响其他语言路径
+
+    model_dir = Path(settings.sensevoice_model_dir)
+    model_file, tokens_file = _ensure_model_files(model_dir)
+    logger.info("加载 SenseVoice 模型（provider=%s）: %s", provider, model_dir)
+    return sherpa_onnx.OfflineRecognizer.from_sense_voice(
+        model=model_file,
+        tokens=tokens_file,
+        use_itn=settings.sensevoice_use_itn,
+        num_threads=settings.sensevoice_num_threads,
+        provider=provider,
+    )
+
+
+def get_recognizer(device: str = "cpu"):
+    """获取指定设备（"cpu" / "cuda"）的识别器，进程内各只加载一次。
+
+    CUDA 初始化失败（驱动/库缺失等）时自动回落 CPU，不影响转写可用性。
+    """
+    if device == "cuda":
+        if "cuda" not in _recognizers:
+            with _recognizer_lock:
+                if "cuda" not in _recognizers:
+                    try:
+                        _recognizers["cuda"] = _load_recognizer("cuda")
+                    except Exception:
+                        logger.exception("SenseVoice CUDA 初始化失败，回落 CPU")
+                        # 此时仍持有锁，不能调 get_recognizer（会重复加锁死锁）
+                        if "cpu" not in _recognizers:
+                            _recognizers["cpu"] = _load_recognizer("cpu")
+                        _recognizers["cuda"] = _recognizers["cpu"]
+        return _recognizers["cuda"]
+
+    if "cpu" not in _recognizers:
         with _recognizer_lock:
-            if _recognizer is None:
-                import sherpa_onnx  # 延迟导入，避免未安装时影响其他语言路径
-
-                model_dir = Path(settings.sensevoice_model_dir)
-                model_file = model_dir / "model.int8.onnx"
-                tokens_file = model_dir / "tokens.txt"
-                if not (model_file.exists() and tokens_file.exists()):
-                    _download_model(model_dir)
-                logger.info("加载 SenseVoice 模型: %s", model_dir)
-                _recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-                    model=str(model_file),
-                    tokens=str(tokens_file),
-                    use_itn=settings.sensevoice_use_itn,
-                    num_threads=settings.sensevoice_num_threads,
-                )
-    return _recognizer
+            if "cpu" not in _recognizers:
+                _recognizers["cpu"] = _load_recognizer("cpu")
+    return _recognizers["cpu"]
 
 
-def transcribe_with_sensevoice(file_path: str) -> str:
+def transcribe_with_sensevoice(file_path: str, device: str = "cpu") -> str:
     """转写音频文件（任意 ffmpeg 支持的格式），返回纯文本。
 
+    device：上传转写传 "cuda"（GPU 加速），实时录制窗口转写传 "cpu"。
     注意：sherpa-onnx 仅 transducer 模型支持热词（上下文偏置），SenseVoice 是
     encoder-decoder 架构不支持——传入热词会触发 C++ 层 abort 并杀死整个进程，
     因此这里绝不传热词。
     """
-    recognizer = get_recognizer()
+    recognizer = get_recognizer(device)
     samples, sample_rate = _decode_audio(file_path)
     stream = recognizer.create_stream()
     stream.accept_waveform(sample_rate, samples)

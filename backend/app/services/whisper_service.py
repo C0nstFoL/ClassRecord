@@ -43,14 +43,16 @@ def get_model() -> WhisperModel:
     return _model
 
 
-def transcribe_audio(file_path: str, preset: str = "default", language: str = "zh") -> str:
+def transcribe_audio(file_path: str, preset: str = "default", language: str = "zh", device: str = "cpu") -> str:
     """按语言路由转写：中文/粤语 → SenseVoice，其他语言 → Whisper。返回完整文本。
 
+    device 仅对 SenseVoice 路径生效（上传转写传 "cuda" 走 GPU，实时录制默认 CPU）；
+    Whisper 路径始终由 CTranslate2 管理（走 GPU）。
     热词仅 Whisper 路径生效（hotwords + initial_prompt）；SenseVoice 是
     encoder-decoder 模型，sherpa-onnx 不支持给它传热词（会直接 abort 进程）。
     """
     if language in SENSEVOICE_LANGUAGES:
-        return transcribe_with_sensevoice(file_path)
+        return transcribe_with_sensevoice(file_path, device=device)
     model = get_model()
     kwargs: dict = {
         "language": language,

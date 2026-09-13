@@ -8,9 +8,15 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# pip 安装的 CUDA 运行库（cublas/cudnn）不在系统默认搜索路径，
-# ctranslate2 首次推理时才懒加载，需显式指定，否则报 libcublas.so.12 not found
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}
+# sherpa-onnx CUDA 轮子链接了 ALSA（libasound.so.2）
+RUN apt-get update && apt-get install -y --no-install-recommends libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# pip 安装的 CUDA 运行库（cublas/cudnn 等）不在系统默认搜索路径，
+# ctranslate2 / onnxruntime CUDA EP 首次推理时才懒加载，需显式指定，
+# 否则报 libcublas.so.12 not found
+ENV NVIDIA_LIBS=/usr/local/lib/python3.12/site-packages/nvidia
+ENV LD_LIBRARY_PATH=${NVIDIA_LIBS}/cublas/lib:${NVIDIA_LIBS}/cudnn/lib:${NVIDIA_LIBS}/cuda_runtime/lib:${NVIDIA_LIBS}/cuda_nvrtc/lib:${NVIDIA_LIBS}/cufft/lib:${NVIDIA_LIBS}/curand/lib:${NVIDIA_LIBS}/cusolver/lib:${NVIDIA_LIBS}/cusparse/lib:${NVIDIA_LIBS}/nvjitlink/lib:${LD_LIBRARY_PATH}
 
 COPY . .
 
