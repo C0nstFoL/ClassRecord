@@ -10,6 +10,7 @@ from starlette.responses import FileResponse
 
 from app.config import get_settings
 from app.database import Base, engine
+from app.routers import app_update as app_update_router
 from app.routers import auth as auth_router
 from app.routers import recordings as recordings_router
 from app.routers import share as share_router
@@ -123,6 +124,12 @@ if settings.cors_origin_list:
 app.include_router(auth_router.router)
 app.include_router(recordings_router.router)
 app.include_router(share_router.router)
+app.include_router(app_update_router.router)
+
+# App 安装包托管：backend/data/apk/ 下的 APK 通过 /downloads/apk/{filename} 下载
+apk_dir = Path(settings.apk_dir)
+apk_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/downloads/apk", StaticFiles(directory=apk_dir), name="apk")
 
 frontend_dist = Path(__file__).resolve().parent.parent / "static"
 if frontend_dist.exists():

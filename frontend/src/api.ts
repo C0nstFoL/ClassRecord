@@ -118,6 +118,16 @@ export const api = {
     request<Recording>(`/api/recordings/${id}/share`, { method: 'DELETE' }),
   // 免登录的公开接口，token 即凭据
   getSharedRecording: (token: string) => request<SharedRecording>(`/api/share/${token}`),
+  // 应用内更新检查（免登录）
+  checkAppUpdate: (currentVersionCode: number) =>
+    request<{
+      has_update: boolean
+      version_name: string
+      version_code: number
+      apk_url: string | null
+      changelog: string
+      force: boolean
+    }>(`/api/app/check-update?current_version_code=${currentVersionCode}`),
   retryRecording: (id: number) =>
     request<Recording>(`/api/recordings/${id}/retry`, { method: 'POST' }),
   askQuestion: (id: number, question: string) =>

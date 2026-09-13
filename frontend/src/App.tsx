@@ -8,6 +8,7 @@ import RecordingDetail from './pages/RecordingDetail'
 import RecordingList from './pages/RecordingList'
 import SharePage from './pages/SharePage'
 import ThemeSwitch from './pages/ThemeSwitch'
+import UpdateChecker from './pages/UpdateChecker'
 import { usePullToRefresh } from './usePullToRefresh'
 import { useTheme } from './useTheme'
 
@@ -105,6 +106,13 @@ function Dashboard({ userName }: { userName: string | null }) {
           <span className="hint">{userName}</span>
           <button
             className="btn small"
+            title="检查应用更新"
+            onClick={() => window.dispatchEvent(new Event('check-app-update'))}
+          >
+            ⤓
+          </button>
+          <button
+            className="btn small"
             onClick={async () => {
               await api.logout()
               window.location.reload()
@@ -161,5 +169,10 @@ export default function App() {
   if (shareMatch) {
     return <SharePage token={shareMatch[1]} />
   }
-  return <LoginGate>{(user) => <Dashboard userName={user.name ?? user.email} />}</LoginGate>
+  return (
+    <>
+      <UpdateChecker />
+      <LoginGate>{(user) => <Dashboard userName={user.name ?? user.email} />}</LoginGate>
+    </>
+  )
 }

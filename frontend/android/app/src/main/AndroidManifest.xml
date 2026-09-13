@@ -55,4 +55,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 前台服务需要获取 WakeLock 保持 CPU 唤醒 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 应用内更新：下载 APK 后发起系统安装 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

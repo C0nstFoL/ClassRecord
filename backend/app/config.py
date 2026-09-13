@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # 存储
     database_url: str = "sqlite:///./data/classrecord.db"
     storage_dir: str = "./data/recordings"
+    # App 安装包托管目录：放入 APK 与 version.json 即可提供应用内更新
+    apk_dir: str = "./data/apk"
 
     # Whisper
     whisper_model_size: str = "large-v3"
