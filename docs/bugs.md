@@ -3,15 +3,15 @@
 > 状态说明：未修复 / 已修复
 > 后续修复按编号引用，修复后更新状态并注明提交
 
-## BUG-001 未修复
+## BUG-001 已修复（6a1873d）
 - 位置：backend/app/main.py:141
 - 描述：SPA fallback 路径穿越漏洞，`frontend_dist / full_path` 未校验，可通过 `//etc/passwd` 或编码穿越读取服务器任意文件
 
-## BUG-002 未修复
+## BUG-002 已修复（6a1873d）
 - 位置：backend/app/routers/recordings.py:439-447
 - 描述：WS 收尾时 `transcribe_task.cancel()` 无法终止已进入 to_thread 的解码线程，与收尾转写并发写同一 raw 文件，PCM 数据损坏
 
-## BUG-003 未修复
+## BUG-003 已修复（6a1873d）
 - 位置：backend/app/main.py:57-75
 - 描述：僵死录制清理误杀安静课堂，转写文本仅在新增时落库，静音超 10 分钟时录制中的记录被误标 FAILED
 
