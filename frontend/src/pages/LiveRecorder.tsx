@@ -42,6 +42,13 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const nativeSttActiveRef = useRef(false)
   const [isLive, setIsLive] = useState(false)
   const [paused, setPaused] = useState(false)
+  // paused 的同步 ref：ws.onclose 等闭包在连接创建时捕获旧 state，
+  // 必须读 ref 才能拿到当前是否处于暂停
+  const pausedRef = useRef(false)
+  const setPausedState = (v: boolean) => {
+    pausedRef.current = v
+    setPaused(v)
+  }
   const [connecting, setConnecting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -87,7 +94,8 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           }
         })
         .catch(() => {
-          /* 记录可能已被删除 */
+          // 记录已被删除等：清掉残留的 sessionStorage 键
+          clearSessionKeys(id)
         })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -194,7 +202,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         }
         snippetRef.current = ''
         setIsLive(true)
-        setPaused(false)
+        setPausedState(false)
         setConnecting(false)
         setResuming(false)
         setElapsedSeconds(elapsedRef.current)
@@ -278,7 +286,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           cleanup()
           setStopping(false)
           setIsLive(false)
-          setPaused(false)
+          setPausedState(false)
           onFinished()
         }
       }
@@ -288,15 +296,16 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       }
 
       ws.onclose = () => {
-        // 暂停中断开（如刷新）：保留 sessionStorage 标记以便恢复横幅出现
-        if (!paused && activeIdRef.current !== null) {
+        // 暂停中断开（如刷新）：保留 sessionStorage 标记以便恢复横幅出现。
+        // 必须读 pausedRef——onclose 闭包里的 paused state 是连接创建时的快照
+        if (!pausedRef.current && activeIdRef.current !== null) {
           clearSessionKeys(activeIdRef.current)
         }
         activeIdRef.current = null
         cleanup()
         setStopping(false)
         setIsLive(false)
-        setPaused(false)
+        setPausedState(false)
       }
 
       wsRef.current = ws
@@ -348,7 +357,12 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       }
     }
     ws.send(JSON.stringify({ type: 'pause' }))
-    setPaused(true)
+    setPausedState(true)
+    // 暂停期间冻结计时：时长不应包含暂停时间
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current)
+      timerRef.current = null
+    }
     if (activeIdRef.current !== null) {
       window.sessionStorage.setItem(`live-paused-${activeIdRef.current}`, '1')
     }
@@ -359,9 +373,10 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     if (!ws || ws.readyState !== WebSocket.OPEN || !paused) return
     // 先发控制帧让服务器开好新分片，再恢复产音
     ws.send(JSON.stringify({ type: 'resume' }))
-    setPaused(false)
+    setPausedState(false)
     if (activeIdRef.current !== null) {
       window.sessionStorage.removeItem(`live-paused-${activeIdRef.current}`)
+      if (!timerRef.current) startElapsedTimer(activeIdRef.current)
     }
     if (nativeSttActiveRef.current) {
       nativeStt.start(language === 'en' ? 'en-US' : 'zh-CN').catch((e) => {

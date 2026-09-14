@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { api, type Recording } from './api'
 import LiveRecorder from './pages/LiveRecorder'
@@ -25,29 +25,32 @@ function Dashboard({ userName }: { userName: string | null }) {
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [recordMode, setRecordMode] = useState<RecordMode>('upload')
-  const pollTimer = useRef<number | null>(null)
   // 移动端（<860px）双视图：false 显示列表，true 显示详情（带返回按钮）
   const [mobileShowDetail, setMobileShowDetail] = useState(false)
   const { mode, setMode } = useTheme()
   const pull = usePullToRefresh()
 
   const refresh = useCallback(async () => {
-    const list = await api.listRecordings()
-    setRecordings(list)
+    try {
+      const list = await api.listRecordings()
+      setRecordings(list)
+    } catch {
+      // 单次刷新失败（网络抖动等）不抛出：保住轮询链，下次到点继续尝试
+    }
   }, [])
 
   useEffect(() => {
     refresh()
   }, [refresh])
 
-  // 只要有记录处于处理中状态，就定时轮询刷新，避免用户手动刷新页面
+  // 只要有记录处于处理中状态，就定时轮询刷新，避免用户手动刷新页面。
+  // 用 interval 而非 setTimeout 链：单次刷新失败（recordings 不变）时轮询依然继续
   useEffect(() => {
     const hasActive = recordings.some((r) => ACTIVE_STATUSES.includes(r.status))
-    if (hasActive) {
-      pollTimer.current = window.setTimeout(refresh, 3000)
-    }
+    if (!hasActive) return
+    const timer = window.setInterval(refresh, 3000)
     return () => {
-      if (pollTimer.current) window.clearTimeout(pollTimer.current)
+      window.clearInterval(timer)
     }
   }, [recordings, refresh])
 

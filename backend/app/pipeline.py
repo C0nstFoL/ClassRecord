@@ -17,6 +17,20 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def remove_recording_files(filename: str) -> None:
+    """清理一条录音在存储目录产生的所有文件。
+
+    实时录制会产生主文件外的分片（{stem}-N.webm、{stem}{tag}-N.webm）与
+    各会话的 raw PCM（{stem}.raw*）——按 stem 前缀统一清理，避免磁盘泄漏。
+    """
+    stem = Path(filename).stem
+    for path in Path(settings.storage_dir).glob(f"{stem}*"):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("清理录音文件失败: %s", path, exc_info=True)
+
+
 def _update_status(db: Session, recording: Recording, status: RecordingStatus, **fields) -> None:
     recording.status = status
     for key, value in fields.items():
@@ -130,13 +144,9 @@ async def merge_recordings(main_id: int, source_ids: list[int]) -> None:
                 qa.recording_id = main.id
                 main.qa_items.append(qa)
 
-        # 删除来源记录及其音频/PCM 文件
+        # 删除来源记录及其全部音频/分片/PCM 文件
         for source in sources:
-            for path in (
-                Path(settings.storage_dir) / source.filename,
-                (Path(settings.storage_dir) / source.filename).with_suffix(".raw"),
-            ):
-                path.unlink(missing_ok=True)
+            remove_recording_files(source.filename)
             db.delete(source)
 
         main.transcript_text = merged_transcript

@@ -25,7 +25,7 @@ from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.live_pipeline import LiveSession, finalize_live_recording, generate_segment_summary
 from app.models import QaRecord, Recording, RecordingStatus, SegmentSummary, User
-from app.pipeline import merge_recordings, process_recording, retry_summarize
+from app.pipeline import merge_recordings, process_recording, remove_recording_files, retry_summarize
 from app.schemas import (
     AskQuestionIn,
     MergeRecordingsIn,
@@ -41,6 +41,10 @@ from app.services.llm_service import answer_question
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# 活跃实时录制会话注册表（进程内）：同一记录只允许一个 WS 连接，
+# 防止双连接并发打开同一音频文件互相截断/交叉转写
+_active_live_recordings: set[int] = set()
 
 ALLOWED_EXTENSIONS = {".webm", ".wav", ".mp3", ".m4a", ".ogg", ".mp4"}
 
@@ -334,6 +338,11 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         if recording is None or recording.user_id != user.id:
             await websocket.close(code=4404, reason="记录不存在")
             return
+        # 同一记录只允许一个录制连接（双开会导致音频互相截断、转写交叉）
+        if recording_id in _active_live_recordings:
+            await websocket.close(code=4409, reason="该记录已在另一连接中录制")
+            return
+        _active_live_recordings.add(recording_id)
         # 重连恢复（页面刷新后续录）：预先取分段小结的最大 seq，供新会话顺延编号
         nonlocal_max_seq = (
             db.query(func.max(SegmentSummary.seq)).filter(SegmentSummary.recording_id == recording.id).scalar()
@@ -345,8 +354,10 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
     # 语言与热词预设由前端在录制开始前选定，通过 WS 查询参数传入
     preset = websocket.query_params.get("preset", "default")
     language = recording.language or "zh"
-    # 重连恢复（页面刷新后续录）：播种历史转写与分段序号，新会话只转写恢复后的音频
-    resumed = bool(recording.transcript_text)
+    # 重连恢复（页面刷新后续录）：播种历史转写与分段序号，新会话只转写恢复后的音频。
+    # session_tag 每个连接都唯一：首连接也用独立文件名，避免重连时（转写文本
+    # 尚未生成）以 "wb" 截断已接收的音频。首连接 transcript_text 为空，播种无副作用。
+    session_tag = f"-s{recording_id}-{uuid.uuid4().hex[:8]}"
     session = LiveSession(
         recording_id,
         audio_path,
@@ -354,8 +365,8 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         language=language,
         initial_text=recording.transcript_text or "",
         segment_seq_start=(nonlocal_max_seq + 1) if nonlocal_max_seq is not None else 0,
-        # 每次重连使用独立 raw 文件，避免读到旧会话的 PCM
-        session_tag=f"-r{recording_id}-{uuid.uuid4().hex[:8]}" if resumed else "",
+        # 每次连接使用独立 raw 文件与音频分片基名，互不干扰
+        session_tag=session_tag,
     )
     transcribe_task: asyncio.Task | None = None
     explicit_stop = False
@@ -383,9 +394,12 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
                     record = await generate_segment_summary(session)
                     if record is not None:
                         session.mark_segment_done()
-                        await websocket.send_json(
-                            {"type": "segment_summary", "seq": record.seq, "text": record.text}
-                        )
+                        try:
+                            await websocket.send_json(
+                                {"type": "segment_summary", "seq": record.seq, "text": record.text}
+                            )
+                        except Exception:
+                            logger.exception("实时转写录音 %s 推送分段小结失败", recording_id)
 
     try:
         transcribe_task = asyncio.create_task(run_transcribe_loop())
@@ -434,13 +448,17 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
                     record = await generate_segment_summary(session)
                     if record is not None:
                         session.mark_segment_done()
-                        await websocket.send_json(
-                            {"type": "segment_summary", "seq": record.seq, "text": record.text}
-                        )
+                        try:
+                            await websocket.send_json(
+                                {"type": "segment_summary", "seq": record.seq, "text": record.text}
+                            )
+                        except Exception:
+                            logger.exception("实时转写录音 %s 推送分段小结失败", recording_id)
             # 忽略客户端心跳空字符串
     except WebSocketDisconnect:
         pass
     finally:
+        _active_live_recordings.discard(recording_id)
         if transcribe_task is not None:
             transcribe_task.cancel()
             # 必须等转写任务真正退出：cancel 不能中断已进入 to_thread 的解码线程，
@@ -457,6 +475,8 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
         except Exception:
             logger.exception("实时转写录音 %s 收尾转写失败", recording_id)
         session.close_file()
+        # 会话级 raw PCM 与临时窗口文件在收尾转写后不再需要，及时清理防磁盘增长
+        session.delete_raw_files()
 
         try:
             await websocket.send_json({"type": "done"})
@@ -527,6 +547,9 @@ async def delete_recording(
     recording = db.get(Recording, recording_id)
     if recording is None or recording.user_id != user.id:
         raise HTTPException(status_code=404, detail="记录不存在")
+    filename = recording.filename
     db.delete(recording)
     db.commit()
+    # 数据库行删除后清理其全部音频/分片/PCM 文件
+    remove_recording_files(filename)
     return {"ok": True}

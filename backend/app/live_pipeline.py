@@ -148,6 +148,17 @@ class LiveSession:
         if not self._raw.closed:
             self._raw.close()
 
+    def delete_raw_files(self) -> None:
+        """删除本会话的 raw PCM 与临时窗口 wav 文件（收尾转写完成后不再需要）。
+
+        音频分片保留（供回放/排查），仅清理中间产物防磁盘增长。
+        """
+        try:
+            self._raw_path.unlink(missing_ok=True)
+            self._raw_path.with_name(self._raw_path.name + ".window.wav").unlink(missing_ok=True)
+        except OSError:
+            logger.warning("清理录音 %s 会话 raw 文件失败", self.recording_id, exc_info=True)
+
     def _ingest_new_audio(self) -> None:
         """把各音频分片中尚未解码的部分增量解码为 16kHz s16 PCM 追加到 raw 文件。
 
@@ -323,6 +334,10 @@ async def finalize_live_recording(recording_id: int) -> None:
     try:
         recording = db.get(Recording, recording_id)
         if recording is None:
+            return
+        # 防重入：REST finish 与 WS 收尾可能并发触发，已在总结/已完成的直接跳过，
+        # 避免双重 LLM 总结与状态互相覆盖
+        if recording.status in (RecordingStatus.SUMMARIZING, RecordingStatus.COMPLETED):
             return
         if not recording.transcript_text:
             _update_status(db, recording, RecordingStatus.FAILED, error_message="未识别到有效语音内容", is_paused=False)

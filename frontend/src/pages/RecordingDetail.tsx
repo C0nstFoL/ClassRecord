@@ -36,6 +36,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   const [shareError, setShareError] = useState<string | null>(null)
   // 手动生成总结
   const [summarizing, setSummarizing] = useState(false)
+  const [summarizeError, setSummarizeError] = useState<string | null>(null)
 
   useEffect(() => {
     if (recording?.summary_text) {
@@ -55,12 +56,16 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     setTitleError(null)
     setShowShare(false)
     setShareLink(null)
-    // 刷新页面后 token 不会回传（安全考虑），但需要从后端已有的过期时间
-    // 恢复"分享中"状态，否则撤销按钮不会出现
+    setShareExpires(null)
+    setShareError(null)
+  }, [recording?.id])
+
+  // 仅随分享过期时间变化：恢复"分享中"状态（撤销按钮）或反映撤销结果，
+  // 不重置面板开合与链接文本（否则刚生成的链接会被刷新冲掉）
+  useEffect(() => {
     const expiresAt = recording?.share_expires_at ? new Date(recording.share_expires_at) : null
     setShareExpires(expiresAt && expiresAt > new Date() ? expiresAt : null)
-    setShareError(null)
-  }, [recording?.id, recording?.share_expires_at])
+  }, [recording?.share_expires_at])
 
   useEffect(() => {
     if (!recording || !recording.transcript_text) return
@@ -223,11 +228,12 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   const handleSummarize = async () => {
     if (summarizing) return
     setSummarizing(true)
+    setSummarizeError(null)
     try {
       await api.summarizeRecording(recording.id)
       onChanged?.()
     } catch (err) {
-      setShareError(err instanceof Error ? err.message : '生成总结失败')
+      setSummarizeError(err instanceof Error ? err.message : '生成总结失败')
     } finally {
       setSummarizing(false)
     }
@@ -384,6 +390,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
             </button>
           </div>
         )}
+      {summarizeError && <p className="error">生成总结失败：{summarizeError}</p>}
 
       {(hasSummary || hasTranscript || hasSegments) && (
         <div className="detail-tabs">
