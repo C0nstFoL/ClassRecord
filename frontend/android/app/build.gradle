@@ -8,8 +8,8 @@ android {
         applicationId "site.folink.classrecord"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.0.0"
+        versionCode 5
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // 仅保留主流移动端架构，减小 APK 体积
         ndk {
