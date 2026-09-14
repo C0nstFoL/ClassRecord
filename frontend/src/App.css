@@ -1198,35 +1198,38 @@
 
 /* ===== 桌面端详情页长内容滚动区（仅电脑网页端，移动端布局不变） ===== */
 @media (min-width: 861px) {
-  /* 转写原文 Tab：固定高度随窗口伸缩，内部滚动 */
+  /* 课堂总结 / 转写原文 Tab：固定高度随窗口伸缩，内部滚动 */
+  .detail-card .tab-with-action .summary-body,
   .detail-card .tab-with-action .text-block {
-    max-height: calc(100vh - 420px);
-    min-height: 240px;
+    max-height: calc(100vh - 290px);
+    min-height: 310px;
     overflow-y: auto;
     padding-right: 8px;
   }
 
   /* 分段小结 Tab：同样固定高度内部滚动 */
   .detail-card .live-segments {
-    max-height: calc(100vh - 420px);
-    min-height: 240px;
+    max-height: calc(100vh - 290px);
+    min-height: 310px;
     overflow-y: auto;
     padding-right: 8px;
   }
 
+  .detail-card .tab-with-action .summary-body::-webkit-scrollbar,
   .detail-card .tab-with-action .text-block::-webkit-scrollbar,
   .detail-card .live-segments::-webkit-scrollbar {
     width: 8px;
   }
 
+  .detail-card .tab-with-action .summary-body::-webkit-scrollbar-thumb,
   .detail-card .tab-with-action .text-block::-webkit-scrollbar-thumb,
   .detail-card .live-segments::-webkit-scrollbar-thumb {
     background: var(--border);
     border-radius: 4px;
   }
 
-  .detail-card .tab-with-action .text-block::-webkit-scrollbar-thumb:hover,
-  .detail-card .live-segments::-webkit-scrollbar-thumb:hover {
+  .detail-card .tab-with-action .summary-body::-webkit-scrollbar-thumb:hover,
+  .detail-card .tab-with-action .text-block::-webkit-scrollbar-thumb:hover {
     background: var(--text-secondary, #8a919f);
   }
 }
