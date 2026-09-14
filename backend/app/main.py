@@ -138,7 +138,8 @@ if frontend_dist.exists():
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         # 前端 SPA 路由回退：非 /api、/auth 的路径统一返回 index.html，由前端路由处理。
-        candidate = frontend_dist / full_path
-        if candidate.is_file():
+        # 防路径穿越：解析后的真实路径必须仍位于静态目录内（拒绝绝对路径与 .. 上跳）
+        candidate = (frontend_dist / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(frontend_dist.resolve()):
             return FileResponse(candidate)
         return FileResponse(frontend_dist / "index.html")

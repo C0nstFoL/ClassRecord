@@ -369,11 +369,16 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
             except Exception:
                 logger.exception("实时转写录音 %s 增量失败", recording_id)
                 continue
+            # 每轮无条件落库刷新 updated_at：课堂静音时转写文本无新增，
+            # 若不刷新会被僵死清理（10 分钟阈值）误判为异常中断
+            _persist_transcript(recording_id, session.transcript_text)
             if delta:
                 # 以全量文本刷新前端：重新转写可能修正更早的识别结果，
                 # 整体替换才能呈现“逐字更新 + 修订”的效果
-                await websocket.send_json({"type": "transcript_full", "text": session.transcript_text})
-                _persist_transcript(recording_id, session.transcript_text)
+                try:
+                    await websocket.send_json({"type": "transcript_full", "text": session.transcript_text})
+                except Exception:
+                    logger.exception("实时转写录音 %s 推送转写失败", recording_id)
                 if session.should_trigger_segment():
                     record = await generate_segment_summary(session)
                     if record is not None:
@@ -438,6 +443,12 @@ async def stream_recording(websocket: WebSocket, recording_id: int):
     finally:
         if transcribe_task is not None:
             transcribe_task.cancel()
+            # 必须等转写任务真正退出：cancel 不能中断已进入 to_thread 的解码线程，
+            # 不等待的话它会与下面的收尾转写并发写同一 raw 文件导致 PCM 损坏
+            try:
+                await transcribe_task
+            except (asyncio.CancelledError, Exception):
+                pass
         # 结束前再跑一次转写，确保收尾的音频片段也被识别（需在文件关闭前执行）
         try:
             delta = await session.transcribe_increment()
