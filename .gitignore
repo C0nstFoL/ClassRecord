@@ -29,3 +29,4 @@ backend/static/
 # Misc
 .DS_Store
 *.log
+.vscode/
