@@ -14,14 +14,67 @@ interface Props {
 
 type DownMessage =
   | { type: 'transcript_full'; text: string }
+  | { type: 'transcript_patch'; prefix_length: number; text: string }
   | { type: 'segment_summary'; seq: number; text: string }
   | { type: 'error'; message: string }
   | { type: 'done' }
+
+// 课堂语音以可懂度为主。32 kbps 单声道 Opus 约为 14.4 MB/小时，
+// 相比浏览器常见的 128 kbps 默认值可减少约 75% 的音频传输量。
+const LIVE_AUDIO_BITS_PER_SECOND = 32_000
+const LIVE_AUDIO_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/ogg;codecs=opus',
+  'audio/mp4;codecs=mp4a.40.2',
+  'audio/mp4',
+]
+
+const SPEECH_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  channelCount: { ideal: 1 },
+  sampleRate: { ideal: 16_000 },
+  sampleSize: { ideal: 16 },
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl: { ideal: true },
+}
+
+function createCompressedAudioRecorder(stream: MediaStream): MediaRecorder {
+  for (const mimeType of LIVE_AUDIO_MIME_TYPES) {
+    if (typeof MediaRecorder.isTypeSupported !== 'function' || !MediaRecorder.isTypeSupported(mimeType)) continue
+    try {
+      return new MediaRecorder(stream, {
+        mimeType,
+        audioBitsPerSecond: LIVE_AUDIO_BITS_PER_SECOND,
+      })
+    } catch {
+      // 部分旧 WebView 虽声称支持该 MIME，却会在构造时拒绝；继续尝试下一项。
+    }
+  }
+
+  try {
+    // 让不支持上述 MIME 的浏览器自行选择封装格式，但仍请求压低语音码率。
+    return new MediaRecorder(stream, { audioBitsPerSecond: LIVE_AUDIO_BITS_PER_SECOND })
+  } catch {
+    // 最后兼容旧版 WebView，宁可沿用默认编码，也不要让录音功能不可用。
+    return new MediaRecorder(stream)
+  }
+}
 
 function formatDuration(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
   const s = totalSeconds % 60
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatTransferRate(bytesPerSecond: number) {
+  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`
+  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
 }
 
 /**
@@ -52,6 +105,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const [connecting, setConnecting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [transferredBytes, setTransferredBytes] = useState(0)
+  const [transferRate, setTransferRate] = useState(0)
+  const [audioBitrate, setAudioBitrate] = useState(LIVE_AUDIO_BITS_PER_SECOND)
   const [transcript, setTranscript] = useState('')
   const [partialText, setPartialText] = useState('')
   const [segments, setSegments] = useState<{ seq: number; text: string }[]>([])
@@ -65,9 +121,12 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
   const wsRef = useRef<WebSocket | null>(null)
   const timerRef = useRef<number | null>(null)
   const heartbeatRef = useRef<number | null>(null)
+  const transferRateIdleRef = useRef<number | null>(null)
   const elapsedRef = useRef(0)
   const activeIdRef = useRef<number | null>(null)
+  const lastTransferAtRef = useRef(0)
   const snippetRef = useRef('')
+  const transcriptTextRef = useRef('')
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
 
   const clearSessionKeys = (id: number) => {
@@ -75,6 +134,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     window.sessionStorage.removeItem(`live-paused-${id}`)
     window.sessionStorage.removeItem(`live-elapsed-${id}`)
     window.sessionStorage.removeItem(`live-preset-${id}`)
+    window.sessionStorage.removeItem(`live-bytes-${id}`)
   }
 
   // 挂载时检查是否有暂停中的录制（sessionStorage 跨刷新保留）
@@ -105,6 +165,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current)
       if (heartbeatRef.current) window.clearInterval(heartbeatRef.current)
+      if (transferRateIdleRef.current) window.clearTimeout(transferRateIdleRef.current)
       mediaRecorderRef.current?.stop()
       streamRef.current?.getTracks().forEach((t) => t.stop())
       wsRef.current?.close()
@@ -124,6 +185,10 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     if (heartbeatRef.current) {
       window.clearInterval(heartbeatRef.current)
       heartbeatRef.current = null
+    }
+    if (transferRateIdleRef.current) {
+      window.clearTimeout(transferRateIdleRef.current)
+      transferRateIdleRef.current = null
     }
     mediaRecorderRef.current = null
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -147,6 +212,39 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     }, 1000)
   }
 
+  const startAudioRecorder = (stream: MediaStream, ws: WebSocket) => {
+    const recorder = createCompressedAudioRecorder(stream)
+    setAudioBitrate(recorder.audioBitsPerSecond || LIVE_AUDIO_BITS_PER_SECOND)
+    setTransferRate(0)
+    if (transferRateIdleRef.current) window.clearTimeout(transferRateIdleRef.current)
+    lastTransferAtRef.current = performance.now()
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+        ws.send(event.data)
+        const now = performance.now()
+        const elapsedSeconds = Math.max((now - lastTransferAtRef.current) / 1000, 0.1)
+        const currentRate = event.data.size / elapsedSeconds
+        lastTransferAtRef.current = now
+        // 轻度平滑相邻分片的封装开销波动，同时仍能每 2 秒响应速率变化。
+        setTransferRate((previousRate) =>
+          previousRate === 0 ? currentRate : previousRate * 0.6 + currentRate * 0.4,
+        )
+        if (transferRateIdleRef.current) window.clearTimeout(transferRateIdleRef.current)
+        transferRateIdleRef.current = window.setTimeout(() => setTransferRate(0), 3500)
+        setTransferredBytes((bytes) => {
+          const next = bytes + event.data.size
+          if (activeIdRef.current !== null) {
+            window.sessionStorage.setItem(`live-bytes-${activeIdRef.current}`, String(next))
+          }
+          return next
+        })
+      }
+    }
+    recorder.start(2000)
+    mediaRecorderRef.current = recorder
+    return recorder
+  }
+
   const startLive = async (existing?: Recording) => {
     const resumeMode = Boolean(existing)
     const resumingPaused = existing
@@ -161,7 +259,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     setResuming(resumeMode)
     if (!resumeMode) {
       setTranscript('')
+      transcriptTextRef.current = ''
       setSegments([])
+      setTransferredBytes(0)
     }
     try {
       const recording = existing ?? (await api.createLiveRecording(title.trim(), language, autoSummary))
@@ -173,6 +273,9 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       const nativeMode = sttMode && (recLanguage === 'zh' || recLanguage === 'en')
       nativeSttActiveRef.current = nativeMode
       activeIdRef.current = recording.id
+      setTransferredBytes(
+        resumeMode ? Number(window.sessionStorage.getItem(`live-bytes-${recording.id}`) ?? 0) : 0,
+      )
 
       // 原生离线识别模式：识别在手机本地完成，先确保麦克风运行时权限已授予
       if (nativeMode) {
@@ -187,7 +290,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           }
         }
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: SPEECH_AUDIO_CONSTRAINTS })
       const ws = new WebSocket(api.liveStreamUrl(recording.id, recPreset))
 
       ws.onopen = () => {
@@ -229,7 +332,8 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           nativeStt.onFinal((text) => {
             setPartialText('')
             if (!text) return
-            setTranscript((prev) => prev + text + ' ')
+            transcriptTextRef.current += text + ' '
+            setTranscript(transcriptTextRef.current)
             snippetRef.current = text
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'stt_text', text }))
@@ -245,14 +349,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         }
 
         // 音频推流模式
-        const recorder = new MediaRecorder(stream)
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data)
-          }
-        }
-        recorder.start(2000)
-        mediaRecorderRef.current = recorder
+        const recorder = startAudioRecorder(stream, ws)
         streamRef.current = stream
         // 必须等待通知权限 + 前台服务启动完成，否则切后台立刻被系统回收
         startRecordingKeepAlive().then((keepAliveOk) => {
@@ -271,10 +368,17 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data) as DownMessage
         if (msg.type === 'transcript_full') {
-          // 服务器周期性推送全量文本（可能修订更早的识别结果），整体替换渲染
+          // 兼容旧服务端的全量消息。
+          transcriptTextRef.current = msg.text
           setTranscript(msg.text)
           snippetRef.current = msg.text.slice(-80)
           // 转写更新时同步刷新通知栏正文
+          void updateRecordingNotification(elapsedRef.current, snippetRef.current)
+        } else if (msg.type === 'transcript_patch') {
+          const next = transcriptTextRef.current.slice(0, msg.prefix_length) + msg.text
+          transcriptTextRef.current = next
+          setTranscript(next)
+          snippetRef.current = next.slice(-80)
           void updateRecordingNotification(elapsedRef.current, snippetRef.current)
         } else if (msg.type === 'segment_summary') {
           setSegments((prev) => [...prev, { seq: msg.seq, text: msg.text }])
@@ -317,7 +421,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     }
   }
 
-  const stopLive = () => {
+  const stopLive = async () => {
     // 立即反馈：后端还要收尾最后一段转写 + 生成整课总结，可能耗时较长
     setStopping(true)
     if (nativeSttActiveRef.current) {
@@ -330,7 +434,16 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       }, 800)
       return
     }
-    mediaRecorderRef.current?.stop()
+    const recorder = mediaRecorderRef.current
+    mediaRecorderRef.current = null
+    if (recorder && recorder.state !== 'inactive') {
+      // 等最后一个 dataavailable 发出并进入 WebSocket 后再通知服务器收尾，
+      // 避免丢掉最长一个 timeslice（当前为 2 秒）的尾部录音。
+      await new Promise<void>((resolve) => {
+        recorder.addEventListener('stop', () => resolve(), { once: true })
+        recorder.stop()
+      })
+    }
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send('stop')
     }
@@ -358,6 +471,11 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
     }
     ws.send(JSON.stringify({ type: 'pause' }))
     setPausedState(true)
+    setTransferRate(0)
+    if (transferRateIdleRef.current) {
+      window.clearTimeout(transferRateIdleRef.current)
+      transferRateIdleRef.current = null
+    }
     // 暂停期间冻结计时：时长不应包含暂停时间
     if (timerRef.current) {
       window.clearInterval(timerRef.current)
@@ -386,14 +504,7 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
       // 新建 MediaRecorder：新分片自带 webm 文件头，可独立解码
       const stream = streamRef.current
       if (stream) {
-        const recorder = new MediaRecorder(stream)
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data)
-          }
-        }
-        recorder.start(2000)
-        mediaRecorderRef.current = recorder
+        startAudioRecorder(stream, ws)
       }
     }
   }
@@ -512,7 +623,13 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
           <span className={paused ? 'recording-dot paused' : 'recording-dot'} />
           <span className="recording-time">{formatDuration(elapsedSeconds)}</span>
           <span className="recording-size">
-            {stopping ? '正在生成课堂总结...' : paused ? '已暂停' : '正在实时转写...'}
+            {stopping
+              ? '正在生成课堂总结...'
+              : paused
+                ? '已暂停'
+                : nativeSttActiveRef.current
+                  ? '本地识别 · 音频净荷 0 B/s（仅传文字）'
+                  : `音频净荷 ${formatSize(transferredBytes)} · ${formatTransferRate(transferRate)} · 编码 ${Math.round(audioBitrate / 1000)} kbps`}
           </span>
         </div>
       )}
