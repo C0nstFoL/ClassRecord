@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { api, type Recording } from '../api'
+import { api, type RecordingListItem, type RecordingStatus } from '../api'
 
-const STATUS_LABEL: Record<Recording['status'], string> = {
+const STATUS_LABEL: Record<RecordingStatus, string> = {
   uploaded: '已上传',
   transcribing: '转写中',
   transcribed: '已转写',
@@ -12,7 +12,7 @@ const STATUS_LABEL: Record<Recording['status'], string> = {
 }
 
 interface Props {
-  recordings: Recording[]
+  recordings: RecordingListItem[]
   selectedId: number | null
   onSelect: (id: number) => void
   onDelete: (id: number) => void
@@ -46,7 +46,7 @@ export default function RecordingList({ recordings, selectedId, onSelect, onDele
   const canMerge = mergeable.length >= 2
   const homeworkEligibleIds = new Set(
     recordings
-      .filter((r) => r.record_type === 'class' && r.status !== 'recording' && Boolean(r.summary_text?.trim()))
+      .filter((r) => r.record_type === 'class' && r.status !== 'recording' && r.has_summary)
       .map((r) => r.id),
   )
   const homeworkSelection = checked.filter((id) => homeworkEligibleIds.has(id))
@@ -165,7 +165,7 @@ export default function RecordingList({ recordings, selectedId, onSelect, onDele
             const relatedIds = relatedRecordingIds[r.id] ?? []
             const relatedRecordings = relatedIds
               .map((id) => recordings.find((recording) => recording.id === id))
-              .filter((recording): recording is Recording => Boolean(recording))
+              .filter((recording): recording is RecordingListItem => Boolean(recording))
             const relatedExpanded = expandedHomeworkIds.includes(r.id)
             return (
               <li

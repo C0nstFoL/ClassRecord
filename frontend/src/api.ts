@@ -30,6 +30,18 @@ export interface Recording {
   updated_at: string
 }
 
+export interface RecordingListItem {
+  id: number
+  title: string
+  status: RecordingStatus
+  record_type: 'class' | 'homework'
+  is_live: boolean
+  is_paused: boolean
+  has_summary: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface SharedRecording {
   title: string
   language: string
@@ -118,7 +130,7 @@ export class UnauthorizedError extends Error {
 export const api = {
   me: () => request<CurrentUser>('/auth/me'),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
-  listRecordings: () => request<Recording[]>('/api/recordings'),
+  listRecordings: () => request<RecordingListItem[]>('/api/recordings/compact'),
   getRecording: (id: number) => request<Recording>(`/api/recordings/${id}`),
   deleteRecording: (id: number) =>
     request<{ ok: boolean }>(`/api/recordings/${id}`, { method: 'DELETE' }),
@@ -205,6 +217,6 @@ export const api = {
   },
   liveStreamUrl: (id: number, preset: string) => {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    return `${protocol}://${window.location.host}/api/recordings/ws/${id}/stream?preset=${encodeURIComponent(preset)}`
+    return `${protocol}://${window.location.host}/api/recordings/ws/${id}/stream?preset=${encodeURIComponent(preset)}&transcript_protocol=patch`
   },
 }
