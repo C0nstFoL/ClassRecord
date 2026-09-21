@@ -524,6 +524,14 @@
   white-space: pre-wrap;
 }
 
+.text-block p {
+  margin: 0 0 1em;
+}
+
+.text-block p:last-child {
+  margin-bottom: 0;
+}
+
 .live-partial {
   color: #999;
   font-style: italic;
@@ -879,6 +887,10 @@
 
 .tab-with-action .copy-btn:hover {
   opacity: 1;
+}
+
+.tab-with-action .bottom-btn {
+  margin-top: 8px;
 }
 
 /* 列表搜索框 */

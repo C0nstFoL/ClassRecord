@@ -3,6 +3,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api, type SharedRecording } from '../api'
 
+function splitTranscript(text: string) {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .split(/\n\s*\n|\n/)
+    .flatMap((line) => line.split(/(?<=[。！？!?；;])\s*/u))
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+}
+
 /**
  * 免登录分享页：访问 /s/{token} 时由 App 路由到此组件，
  * 凭 URL 中的 token 从公开接口拉取只读内容。
@@ -102,7 +111,11 @@ export default function SharePage({ token }: { token: string }) {
           </div>
         )}
         {tab === 'transcript' && hasTranscript && (
-          <p className="text-block">{data.transcript_text}</p>
+          <div className="text-block">
+            {splitTranscript(data.transcript_text ?? '').map((paragraph, index) => (
+              <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>
+            ))}
+          </div>
         )}
 
         <p className="share-footer">由 课堂记录助手 生成 · 内容为只读分享</p>

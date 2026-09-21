@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api, type QaRecord, type Recording, type SegmentSummary } from '../api'
@@ -10,6 +10,15 @@ interface Props {
 }
 
 type Tab = 'summary' | 'transcript' | 'segments' | 'ask'
+
+function splitTranscript(text: string) {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .split(/\n\s*\n|\n/)
+    .flatMap((line) => line.split(/(?<=[。！？!?；;])\s*/u))
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+}
 
 export default function RecordingDetail({ recording, onRetried, onChanged }: Props) {
   const [tab, setTab] = useState<Tab>('summary')
@@ -37,6 +46,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   // 手动生成总结
   const [summarizing, setSummarizing] = useState(false)
   const [summarizeError, setSummarizeError] = useState<string | null>(null)
+  const transcriptRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (recording?.summary_text) {
@@ -237,6 +247,10 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     } finally {
       setSummarizing(false)
     }
+  }
+
+  const scrollTranscriptToBottom = () => {
+    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })
   }
 
   return (
@@ -454,7 +468,14 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
 
       {tab === 'transcript' && hasTranscript && (
         <div className="tab-with-action">
-          <p className="text-block">{recording.transcript_text}</p>
+          <div className="text-block" ref={transcriptRef}>
+            {splitTranscript(recording.transcript_text ?? '').map((paragraph, index) => (
+              <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>
+            ))}
+          </div>
+          <button className="btn small bottom-btn" onClick={scrollTranscriptToBottom}>
+            ↓ 跳转到底部
+          </button>
           <button
             className="btn small copy-btn"
             onClick={() => copyText('transcript', recording.transcript_text ?? '')}
