@@ -966,8 +966,27 @@
   opacity: 1;
 }
 
-.tab-with-action .bottom-btn {
-  margin-top: 8px;
+.transcript-floating-actions {
+  position: sticky;
+  top: calc(12px + env(safe-area-inset-top));
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
+  margin: -8px 0 8px;
+  pointer-events: none;
+}
+
+.transcript-floating-actions .btn {
+  pointer-events: auto;
+  background: var(--card-bg);
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-with-action .transcript-floating-actions .copy-btn {
+  position: static;
 }
 
 /* 列表搜索框 */

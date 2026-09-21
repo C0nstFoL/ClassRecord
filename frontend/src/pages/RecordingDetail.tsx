@@ -571,20 +571,22 @@ export default function RecordingDetail({ recording, onRetried, onChanged, onSel
 
       {tab === 'transcript' && hasTranscript && (
         <div className="tab-with-action">
+          <div className="transcript-floating-actions">
+            <button className="btn small bottom-btn" onClick={scrollTranscriptToBottom}>
+              ↓ 跳转到底部
+            </button>
+            <button
+              className="btn small copy-btn"
+              onClick={() => copyText('transcript', recording.transcript_text ?? '')}
+            >
+              {copied === 'transcript' ? '✓ 已复制' : '复制'}
+            </button>
+          </div>
           <div className="text-block" ref={transcriptRef}>
             {splitTranscript(recording.transcript_text ?? '').map((paragraph, index) => (
               <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph}</p>
             ))}
           </div>
-          <button className="btn small bottom-btn" onClick={scrollTranscriptToBottom}>
-            ↓ 跳转到底部
-          </button>
-          <button
-            className="btn small copy-btn"
-            onClick={() => copyText('transcript', recording.transcript_text ?? '')}
-          >
-            {copied === 'transcript' ? '✓ 已复制' : '复制'}
-          </button>
         </div>
       )}
 
