@@ -300,7 +300,16 @@ export default function RecordingDetail({ recording, onRetried, onChanged, onSel
   }
 
   const scrollTranscriptToBottom = () => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })
+    const transcript = transcriptRef.current
+    if (!transcript) return
+
+    if (transcript.scrollHeight > transcript.clientHeight) {
+      transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' })
+      return
+    }
+
+    // 移动端原文不设独立滚动区，应滚动页面而不是不可滚动的 text-block。
+    transcript.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }
 
   return (
