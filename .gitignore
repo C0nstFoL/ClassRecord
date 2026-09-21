@@ -11,6 +11,7 @@ __pycache__/
 
 # Data / uploads
 backend/data/
+/data/
 
 # Node
 frontend/node_modules/
