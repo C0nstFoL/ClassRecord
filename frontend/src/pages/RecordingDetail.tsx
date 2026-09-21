@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api, type QaRecord, type Recording, type SegmentSummary } from '../api'
+import { api, type HomeworkTask, type QaRecord, type Recording, type SegmentSummary } from '../api'
 
 interface Props {
   recording: Recording | null
   onRetried?: () => void
   onChanged?: () => void
+  onSelectRecording?: (id: number) => void
 }
 
 type Tab = 'summary' | 'transcript' | 'segments' | 'ask'
@@ -20,7 +21,7 @@ function splitTranscript(text: string) {
     .filter(Boolean)
 }
 
-export default function RecordingDetail({ recording, onRetried, onChanged }: Props) {
+export default function RecordingDetail({ recording, onRetried, onChanged, onSelectRecording }: Props) {
   const [tab, setTab] = useState<Tab>('summary')
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
@@ -46,7 +47,11 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   // 手动生成总结
   const [summarizing, setSummarizing] = useState(false)
   const [summarizeError, setSummarizeError] = useState<string | null>(null)
+  const [homeworkTasks, setHomeworkTasks] = useState<HomeworkTask[]>([])
+  const [homeworkTaskError, setHomeworkTaskError] = useState<string | null>(null)
+  const [updatingHomeworkTaskIds, setUpdatingHomeworkTaskIds] = useState<number[]>([])
   const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const homeworkRecordingId = recording?.record_type === 'homework' ? recording.id : null
 
   useEffect(() => {
     if (recording?.summary_text) {
@@ -68,7 +73,28 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     setShareLink(null)
     setShareExpires(null)
     setShareError(null)
+    setHomeworkTasks([])
+    setHomeworkTaskError(null)
+    setUpdatingHomeworkTaskIds([])
   }, [recording?.id])
+
+  useEffect(() => {
+    if (homeworkRecordingId === null) return
+    let cancelled = false
+    api
+      .listHomeworkTasks(homeworkRecordingId)
+      .then((tasks) => {
+        if (!cancelled) setHomeworkTasks(tasks)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setHomeworkTaskError(err instanceof Error ? err.message : '加载待办列表失败')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [homeworkRecordingId])
 
   // 仅随分享过期时间变化：恢复"分享中"状态（撤销按钮）或反映撤销结果，
   // 不重置面板开合与链接文本（否则刚生成的链接会被刷新冲掉）
@@ -118,6 +144,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   const hasSummary = Boolean(recording.summary_text)
   const hasTranscript = Boolean(recording.transcript_text)
   const hasSegments = segments.length > 0
+  const isHomework = recording.record_type === 'homework'
 
   const copyText = async (key: string, text: string) => {
     try {
@@ -132,7 +159,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
   const exportMarkdown = () => {
     const parts = [`# ${recording.title}`, '']
     if (recording.summary_text) {
-      parts.push('## ✨ 课堂总结', '', recording.summary_text, '')
+      parts.push(isHomework ? '## ✅ 待办与作业' : '## ✨ 课堂总结', '', recording.summary_text, '')
     }
     if (segments.length > 0) {
       parts.push('## 🧩 分段小结', '')
@@ -249,6 +276,29 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
     }
   }
 
+  const handleHomeworkTaskToggle = async (task: HomeworkTask) => {
+    if (!recording || updatingHomeworkTaskIds.includes(task.id)) return
+    const completed = !task.completed
+    setUpdatingHomeworkTaskIds((ids) => [...ids, task.id])
+    setHomeworkTaskError(null)
+    setHomeworkTasks((tasks) =>
+      tasks.map((item) => (item.id === task.id ? { ...item, completed } : item)),
+    )
+    try {
+      const updated = await api.updateHomeworkTask(recording.id, task.id, completed)
+      setHomeworkTasks((tasks) =>
+        tasks.map((item) => (item.id === task.id ? updated : item)),
+      )
+    } catch (err) {
+      setHomeworkTasks((tasks) =>
+        tasks.map((item) => (item.id === task.id ? task : item)),
+      )
+      setHomeworkTaskError(err instanceof Error ? err.message : '更新待办状态失败')
+    } finally {
+      setUpdatingHomeworkTaskIds((ids) => ids.filter((id) => id !== task.id))
+    }
+  }
+
   const scrollTranscriptToBottom = () => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })
   }
@@ -284,6 +334,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
       ) : (
         <div className="title-row">
           <h2>{recording.title}</h2>
+          {isHomework && <span className="record-tag">待办作业</span>}
           <button
             className="btn small icon-btn"
             title="重命名"
@@ -413,7 +464,7 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
               className={`detail-tab ${tab === 'summary' ? 'active' : ''}`}
               onClick={() => setTab('summary')}
             >
-              ✨ 课堂总结
+              {isHomework ? '✅ 待办与作业' : '✨ 课堂总结'}
             </button>
           )}
           {hasSegments && (
@@ -445,9 +496,61 @@ export default function RecordingDetail({ recording, onRetried, onChanged }: Pro
 
       {tab === 'summary' && hasSummary && (
         <div className="tab-with-action">
-          <div className="markdown-body summary-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
-          </div>
+          {isHomework && homeworkTaskError && <p className="error">{homeworkTaskError}</p>}
+          {isHomework && homeworkTasks.length > 0 ? (
+            <div className="homework-task-list summary-body">
+              {homeworkTasks.map((task) => (
+                <div className={`homework-task-item ${task.completed ? 'completed' : ''}`} key={task.id}>
+                  <label className="homework-task-check">
+                    <input
+                      type="checkbox"
+                      checked={task.completed}
+                      disabled={updatingHomeworkTaskIds.includes(task.id)}
+                      onChange={() => handleHomeworkTaskToggle(task)}
+                    />
+                    <span>{task.content}</span>
+                  </label>
+                  <div className="homework-task-meta">
+                    <span>截止：{task.deadline || '未注明'}</span>
+                    {task.details && <span>要求：{task.details}</span>}
+                  </div>
+                  <div className="homework-task-sources">
+                    <span>来源：</span>
+                    {task.sources.length > 0 ? (
+                      task.sources.map((source) => (
+                        <button
+                          type="button"
+                          className="homework-source-link"
+                          key={source.id}
+                          onClick={() => onSelectRecording?.(source.id)}
+                        >
+                          {source.title}
+                        </button>
+                      ))
+                    ) : (
+                      <span className="hint">原课程记录已删除或来源未注明</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <details className="homework-original">
+                <summary>查看完整整理内容</summary>
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
+                </div>
+              </details>
+            </div>
+          ) : (
+            <div className="markdown-body summary-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{recording.summary_text}</ReactMarkdown>
+            </div>
+          )}
+          {isHomework && (
+            <label className="weekly-summary-placeholder">
+              <input type="checkbox" disabled />
+              每周自动总结（即将支持）
+            </label>
+          )}
           <button className="btn small copy-btn" onClick={() => copyText('summary', recording.summary_text ?? '')}>
             {copied === 'summary' ? '✓ 已复制' : '复制'}
           </button>

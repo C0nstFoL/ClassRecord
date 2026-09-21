@@ -20,6 +20,7 @@ export interface Recording {
   transcript_text: string | null
   summary_text: string | null
   error_message: string | null
+  record_type: 'class' | 'homework'
   is_live: boolean
   is_paused: boolean
   auto_summary: boolean
@@ -55,6 +56,25 @@ export interface SegmentSummary {
 export interface Preset {
   key: string
   label: string
+}
+
+export interface HomeworkExtraction {
+  job_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  recording_names: string[]
+  homework: string | null
+  error: string | null
+  result_recording_id: number | null
+}
+
+export interface HomeworkTask {
+  id: number
+  content: string
+  deadline: string | null
+  details: string | null
+  completed: boolean
+  sort_order: number
+  sources: { id: number; title: string }[]
 }
 
 // 录制语言：zh/en/ja/ko/yue。中文与粤语由服务器端 SenseVoice 模型识别，
@@ -160,6 +180,21 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source_ids: sourceIds }),
+    }),
+  extractHomework: (recordingIds: number[]) =>
+    request<HomeworkExtraction>('/api/recordings/homework', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recording_ids: recordingIds }),
+    }),
+  getHomeworkJob: (jobId: string) => request<HomeworkExtraction>(`/api/recordings/homework/${jobId}`),
+  listHomeworkTasks: (recordingId: number) =>
+    request<HomeworkTask[]>(`/api/recordings/${recordingId}/homework-tasks`),
+  updateHomeworkTask: (recordingId: number, taskId: number, completed: boolean) =>
+    request<HomeworkTask>(`/api/recordings/${recordingId}/homework-tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ completed }),
     }),
   createLiveRecording: (title: string, language: string, autoSummary: boolean) => {
     const form = new FormData()

@@ -460,6 +460,83 @@
   color: var(--danger);
 }
 
+.record-tag {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.homework-related {
+  margin-top: 9px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
+}
+
+.homework-related-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.homework-related-arrow {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+
+.homework-related-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.homework-related-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0 0 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent-border);
+}
+
+.homework-related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--text-h);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.homework-related-item:hover {
+  border-color: var(--accent-border);
+}
+
+.homework-related-date {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .record-mode-tabs {
   display: flex;
   gap: 6px;
@@ -1085,6 +1162,82 @@
   margin-bottom: 8px;
   border: 1px dashed var(--border);
   border-radius: 10px;
+}
+
+.selection-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.weekly-summary-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.homework-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.homework-task-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.homework-task-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-h);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.homework-task-check input {
+  margin-top: 3px;
+}
+
+.homework-task-item.completed .homework-task-check span {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.homework-task-meta,
+.homework-task-sources {
+  display: flex;
+  gap: 6px 12px;
+  flex-wrap: wrap;
+  margin: 7px 0 0 25px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.homework-source-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.homework-original {
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.homework-original > summary {
+  cursor: pointer;
 }
 
 .list-item.checked {

@@ -42,6 +42,8 @@ class Recording(Base):
     transcript_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # class：普通课堂记录；homework：由多条课堂总结整理生成的待办作业记录
+    record_type: Mapped[str] = mapped_column(String(16), default="class", index=True)
     is_live: Mapped[bool] = mapped_column(default=False)  # 是否为实时流式录制产生的记录
     is_paused: Mapped[bool] = mapped_column(default=False)  # 实时录制是否处于暂停（暂停中不参与僵死清理）
     # 转写完成后是否自动生成总结；关闭时停在「已转写」，可在详情页手动生成
@@ -88,3 +90,44 @@ class SegmentSummary(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
 
     recording: Mapped["Recording"] = relationship(back_populates="segments")
+
+
+class HomeworkExtractionJob(Base):
+    """跨页面刷新保存的作业提取任务与结果。"""
+
+    __tablename__ = "homework_extraction_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    recording_names_json: Mapped[str] = mapped_column(Text)
+    homework: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_recording_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recordings.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+
+class HomeworkTask(Base):
+    """待办作业记录中的可勾选列表项。"""
+
+    __tablename__ = "homework_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recording_id: Mapped[int] = mapped_column(
+        ForeignKey("recordings.id", ondelete="CASCADE"), index=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    deadline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_recording_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    completed: Mapped[bool] = mapped_column(default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )

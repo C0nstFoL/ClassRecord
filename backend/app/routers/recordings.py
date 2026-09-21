@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import secrets
 import uuid
 from datetime import timedelta
@@ -24,10 +25,15 @@ from app.auth import get_current_user, get_current_user_ws
 from app.config import get_settings
 from app.database import SessionLocal, get_db
 from app.live_pipeline import LiveSession, finalize_live_recording, generate_segment_summary
-from app.models import QaRecord, Recording, RecordingStatus, SegmentSummary, User
+from app.models import HomeworkExtractionJob, HomeworkTask, QaRecord, Recording, RecordingStatus, SegmentSummary, User
 from app.pipeline import merge_recordings, process_recording, remove_recording_files, retry_summarize
 from app.schemas import (
     AskQuestionIn,
+    ExtractHomeworkIn,
+    HomeworkOut,
+    HomeworkTaskOut,
+    HomeworkTaskSourceOut,
+    HomeworkTaskUpdateIn,
     MergeRecordingsIn,
     QaRecordOut,
     RecordingOut,
@@ -36,7 +42,7 @@ from app.schemas import (
     ShareLinkIn,
     ShareLinkOut,
 )
-from app.services.llm_service import answer_question
+from app.services.llm_service import answer_question, extract_homework
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 settings = get_settings()
@@ -128,6 +134,245 @@ async def merge_into_recording(
     background_tasks.add_task(merge_recordings, recording_id, payload.source_ids)
     db.refresh(main)
     return main
+
+
+async def _run_homework_job(job_id: str, recordings: list[tuple[int, str, str]]) -> None:
+    with SessionLocal() as db:
+        job = db.get(HomeworkExtractionJob, job_id)
+        if job is None:
+            return
+        if job.status == "completed" and job.result_recording_id is not None:
+            return
+        job.status = "processing"
+        db.commit()
+
+    try:
+        result = await extract_homework([(title, summary) for _, title, summary in recordings])
+    except Exception as exc:  # noqa: BLE001 - 将 LLM 错误转为前端可读状态
+        logger.exception("提取作业任务 %s 失败", job_id)
+        with SessionLocal() as db:
+            job = db.get(HomeworkExtractionJob, job_id)
+            if job is not None:
+                job.status = "failed"
+                job.error = str(exc)
+                db.commit()
+        return
+
+    with SessionLocal() as db:
+        job = db.get(HomeworkExtractionJob, job_id)
+        if job is not None:
+            result_recording = Recording(
+                user_id=job.user_id,
+                title=result.title,
+                filename=f"homework-{job_id}.md",
+                status=RecordingStatus.COMPLETED,
+                transcript_text=None,
+                summary_text=result.markdown,
+                record_type="homework",
+                is_live=False,
+                is_paused=False,
+                auto_summary=False,
+                language="zh",
+            )
+            db.add(result_recording)
+            db.flush()
+            for sort_order, task_data in enumerate(result.tasks):
+                source_ids = [recordings[index - 1][0] for index in task_data.source_indexes]
+                db.add(
+                    HomeworkTask(
+                        recording_id=result_recording.id,
+                        content=task_data.content,
+                        deadline=task_data.deadline,
+                        details=task_data.details,
+                        source_recording_ids_json=json.dumps(source_ids),
+                        completed=False,
+                        sort_order=sort_order,
+                    )
+                )
+            job.status = "completed"
+            job.homework = result.markdown
+            job.error = None
+            job.result_recording_id = result_recording.id
+            db.commit()
+
+
+def _homework_job_out(job: HomeworkExtractionJob) -> HomeworkOut:
+    return HomeworkOut(
+        job_id=job.id,
+        status=job.status,
+        recording_names=json.loads(job.recording_names_json),
+        homework=job.homework,
+        error=job.error,
+        result_recording_id=job.result_recording_id,
+    )
+
+
+@router.post("/homework", response_model=HomeworkOut)
+async def extract_homework_from_recordings(
+    payload: ExtractHomeworkIn,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """从用户选择的多条课堂记录中提取作业清单。"""
+    recording_ids = list(dict.fromkeys(payload.recording_ids))
+    if len(recording_ids) < 2:
+        raise HTTPException(status_code=400, detail="请至少选择 2 条记录")
+
+    recordings = db.query(Recording).filter(Recording.id.in_(recording_ids)).all()
+    if len(recordings) != len(recording_ids):
+        raise HTTPException(status_code=404, detail="部分记录不存在")
+    for recording in recordings:
+        if recording.user_id != user.id:
+            raise HTTPException(status_code=403, detail="存在不属于当前用户的记录")
+        if recording.record_type == "homework":
+            raise HTTPException(status_code=400, detail=f"「{recording.title}」是整理结果，不能重复参与整理")
+        if recording.status == RecordingStatus.RECORDING:
+            raise HTTPException(status_code=400, detail=f"「{recording.title}」正在录制中，暂不能提取作业")
+        if not recording.summary_text or not recording.summary_text.strip():
+            raise HTTPException(status_code=400, detail=f"「{recording.title}」还没有课堂总结")
+
+    ordered = sorted(recordings, key=lambda item: (item.created_at, item.id))
+    job_id = uuid.uuid4().hex
+    recording_names = [recording.title for recording in ordered]
+    job = HomeworkExtractionJob(
+        id=job_id,
+        user_id=user.id,
+        status="pending",
+        recording_names_json=json.dumps(recording_names, ensure_ascii=False),
+    )
+    db.add(job)
+    db.commit()
+    background_tasks.add_task(
+        _run_homework_job,
+        job_id,
+        [(recording.id, recording.title, recording.summary_text.strip()) for recording in ordered],
+    )
+    return HomeworkOut(
+        job_id=job_id,
+        status="pending",
+        recording_names=recording_names,
+    )
+
+
+@router.get("/homework/latest", response_model=HomeworkOut | None)
+async def get_latest_homework_job(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """返回当前用户最近一次作业提取任务，供页面刷新后恢复。"""
+    job = (
+        db.query(HomeworkExtractionJob)
+        .filter(HomeworkExtractionJob.user_id == user.id)
+        .order_by(HomeworkExtractionJob.created_at.desc())
+        .first()
+    )
+    return _homework_job_out(job) if job is not None else None
+
+
+@router.get("/homework/{job_id}", response_model=HomeworkOut)
+async def get_homework_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询当前用户发起的作业提取任务。"""
+    job = db.get(HomeworkExtractionJob, job_id)
+    if job is None or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="作业提取任务不存在或已过期")
+    return _homework_job_out(job)
+
+
+def _homework_task_out(task: HomeworkTask, user_id: int, db: Session) -> HomeworkTaskOut:
+    try:
+        source_ids = json.loads(task.source_recording_ids_json)
+    except (TypeError, ValueError):
+        source_ids = []
+    sources_by_id = {
+        recording.id: recording
+        for recording in db.query(Recording)
+        .filter(Recording.id.in_(source_ids), Recording.user_id == user_id)
+        .all()
+    } if source_ids else {}
+    return HomeworkTaskOut(
+        id=task.id,
+        content=task.content,
+        deadline=task.deadline,
+        details=task.details,
+        completed=task.completed,
+        sort_order=task.sort_order,
+        sources=[
+            HomeworkTaskSourceOut(id=source_id, title=sources_by_id[source_id].title)
+            for source_id in source_ids
+            if source_id in sources_by_id
+        ],
+    )
+
+
+def _sync_homework_markdown_checkboxes(
+    recording: Recording,
+    tasks: list[HomeworkTask],
+) -> None:
+    """让分享与导出的 Markdown 勾选状态和结构化待办保持一致。"""
+    if not recording.summary_text:
+        return
+    lines = recording.summary_text.splitlines()
+    task_index = 0
+    for line_index, line in enumerate(lines):
+        if task_index >= len(tasks):
+            break
+        if re.match(r"^- \[[ xX]\] ", line):
+            marker = "x" if tasks[task_index].completed else " "
+            lines[line_index] = re.sub(r"^- \[[ xX]\]", f"- [{marker}]", line, count=1)
+            task_index += 1
+    recording.summary_text = "\n".join(lines)
+
+
+@router.get("/{recording_id}/homework-tasks", response_model=list[HomeworkTaskOut])
+async def list_homework_tasks(
+    recording_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id or recording.record_type != "homework":
+        raise HTTPException(status_code=404, detail="待办作业记录不存在")
+    tasks = (
+        db.query(HomeworkTask)
+        .filter(HomeworkTask.recording_id == recording_id)
+        .order_by(HomeworkTask.sort_order, HomeworkTask.id)
+        .all()
+    )
+    return [_homework_task_out(task, user.id, db) for task in tasks]
+
+
+@router.patch("/{recording_id}/homework-tasks/{task_id}", response_model=HomeworkTaskOut)
+async def update_homework_task(
+    recording_id: int,
+    task_id: int,
+    payload: HomeworkTaskUpdateIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    recording = db.get(Recording, recording_id)
+    if recording is None or recording.user_id != user.id or recording.record_type != "homework":
+        raise HTTPException(status_code=404, detail="待办作业记录不存在")
+    task = db.get(HomeworkTask, task_id)
+    if task is None or task.recording_id != recording_id:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    task.completed = payload.completed
+    tasks = (
+        db.query(HomeworkTask)
+        .filter(HomeworkTask.recording_id == recording_id)
+        .order_by(HomeworkTask.sort_order, HomeworkTask.id)
+        .all()
+    )
+    _sync_homework_markdown_checkboxes(recording, tasks)
+    db.add(task)
+    db.add(recording)
+    db.commit()
+    db.refresh(task)
+    return _homework_task_out(task, user.id, db)
 
 
 @router.post("/{recording_id}/finish", response_model=RecordingOut)
@@ -548,6 +793,11 @@ async def delete_recording(
     if recording is None or recording.user_id != user.id:
         raise HTTPException(status_code=404, detail="记录不存在")
     filename = recording.filename
+    if recording.record_type == "homework":
+        db.query(HomeworkTask).filter(HomeworkTask.recording_id == recording.id).delete()
+        db.query(HomeworkExtractionJob).filter(
+            HomeworkExtractionJob.result_recording_id == recording.id
+        ).update({HomeworkExtractionJob.result_recording_id: None})
     db.delete(recording)
     db.commit()
     # 数据库行删除后清理其全部音频/分片/PCM 文件

@@ -90,6 +90,12 @@ function Dashboard({ userName }: { userName: string | null }) {
     if (next !== null) window.scrollTo({ top: 0 })
   }
 
+  const handleHomeworkCreated = (id: number) => {
+    setSelectedId(id)
+    setMobileShowDetail(true)
+    void refresh()
+  }
+
   const selected = recordings.find((r) => r.id === selectedId) ?? null
 
   return (
@@ -153,13 +159,19 @@ function Dashboard({ userName }: { userName: string | null }) {
             onSelect={handleSelect}
             onDelete={handleDelete}
             onMerge={handleMerge}
+            onHomeworkCreated={handleHomeworkCreated}
           />
         </div>
         <div className="right-col">
           <button className="btn small mobile-back" onClick={() => setMobileShowDetail(false)}>
             ← 返回列表
           </button>
-          <RecordingDetail recording={selected} onRetried={refresh} onChanged={refresh} />
+          <RecordingDetail
+            recording={selected}
+            onRetried={refresh}
+            onChanged={refresh}
+            onSelectRecording={handleSelect}
+          />
         </div>
       </main>
     </div>
