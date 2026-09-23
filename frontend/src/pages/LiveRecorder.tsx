@@ -592,31 +592,13 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
         录制结束后自动生成课堂总结
       </label>
 
-      <div className="row">
-        {!isLive ? (
+      {!isLive && (
+        <div className="row">
           <button className="btn primary" onClick={() => void startLive()} disabled={connecting || resuming}>
             {connecting ? '连接中...' : '开始实时录制'}
           </button>
-        ) : paused ? (
-          <>
-            <button className="btn primary" onClick={resumeLive}>
-              继续录制
-            </button>
-            <button className="btn danger" onClick={stopLive} disabled={stopping}>
-              {stopping ? '停止中...' : '结束录制'}
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="btn" onClick={() => void pauseLive()} disabled={stopping}>
-              ⏸ 暂停
-            </button>
-            <button className="btn danger" onClick={stopLive} disabled={stopping}>
-              {stopping ? '停止中...' : '结束录制'}
-            </button>
-          </>
-        )}
-      </div>
+        </div>
+      )}
 
       {isLive && (
         <div className="recording-status">
@@ -638,6 +620,22 @@ export default function LiveRecorder({ onStarted, onFinished }: Props) {
 
       {(isLive || transcript || segments.length > 0) && (
         <div className="live-panel">
+          {isLive && (
+            <div className="live-recording-actions">
+              {paused ? (
+                <button className="btn primary" onClick={resumeLive} disabled={stopping}>
+                  继续录制
+                </button>
+              ) : (
+                <button className="btn" onClick={() => void pauseLive()} disabled={stopping}>
+                  ⏸ 暂停
+                </button>
+              )}
+              <button className="btn danger" onClick={stopLive} disabled={stopping}>
+                {stopping ? '停止中...' : '结束录制'}
+              </button>
+            </div>
+          )}
           {segments.length > 0 && (
             <div className="live-segments">
               <div className="live-panel-title">分段小结</div>
