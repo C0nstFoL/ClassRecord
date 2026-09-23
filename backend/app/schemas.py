@@ -61,6 +61,20 @@ class RecordingListOut(ApiModel):
     updated_at: datetime.datetime
 
 
+class RecordingListOut(ApiModel):
+    """记录列表的轻量响应，不携带可能很大的转写与总结正文。"""
+
+    id: int
+    title: str
+    status: RecordingStatus
+    record_type: str
+    is_live: bool
+    is_paused: bool
+    has_summary: bool
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
 class RecordingUpdateIn(ApiModel):
     title: str
 

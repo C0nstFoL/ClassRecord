@@ -32,6 +32,7 @@ from app.schemas import (
     HomeworkOut,
     MergeRecordingsIn,
     QaRecordOut,
+    RecordingListOut,
     RecordingOut,
     RecordingUpdateIn,
     SegmentSummaryOut,
@@ -59,6 +60,31 @@ async def list_recordings(user: User = Depends(get_current_user), db: Session = 
         .order_by(Recording.created_at.desc())
         .all()
     )
+
+
+@router.get("/compact", response_model=list[RecordingListOut])
+async def list_compact_recordings(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """供列表轮询使用的轻量记录元数据，正文按需通过详情接口加载。"""
+    recordings = (
+        db.query(Recording)
+        .filter(Recording.user_id == user.id)
+        .order_by(Recording.created_at.desc())
+        .all()
+    )
+    return [
+        RecordingListOut(
+            id=recording.id,
+            title=recording.title,
+            status=recording.status,
+            record_type=recording.record_type,
+            is_live=recording.is_live,
+            is_paused=recording.is_paused,
+            has_summary=bool(recording.summary_text and recording.summary_text.strip()),
+            created_at=recording.created_at,
+            updated_at=recording.updated_at,
+        )
+        for recording in recordings
+    ]
 
 
 @router.get("/presets")
