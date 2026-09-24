@@ -10,11 +10,11 @@ const config: CapacitorConfig = {
   appName: '课堂记录助手',
   webDir: 'dist',
   server: {
-    url: 'https://class.folink.site',
+    url: 'https://class.constfol.cn',
     androidScheme: 'https',
     // 允许 Zitadel 登录域在 App 内导航，否则会被拦截到系统浏览器打开，
     // 导致 OIDC 回调发生在系统浏览器中、丢失 App WebView 内的 session cookie
-    allowNavigation: ['auth.folink.site'],
+    allowNavigation: ['auth.constfol.cn'],
   },
 }
 
