@@ -74,3 +74,7 @@
 ## BUG-018 已修复
 - 位置：backend/app/routers/recordings.py
 - 描述：前端列表已改为请求轻量接口 `/api/recordings/compact`，但后端缺少该路由，请求被 `/{recording_id}` 动态路由接管并返回 422；前端刷新失败静默处理，导致历史记录列表看似为空。恢复轻量列表路由，返回当前用户的记录元数据而不传输转写与总结正文。
+
+## BUG-019 未修复
+- 位置：公网 `https://class.constfol.cn` 的 HTTPS 访问链路
+- 描述：域名迁移期间，公网请求曾返回 Cloudflare 525（SSL 握手失败）或超时，随后也能返回首页 200 和登录跳转 307；当前访问结果不稳定。本机 ClassRecord 后端正常。需检查新域名的 DNS、Cloudflare 与源站证书配置，并复测网页访问及 OIDC 登录回调。
